@@ -1,0 +1,14 @@
+[package]
+name = "linker"
+version = "1.0.0"
+edition = "2021"
+
+
+[dependencies]
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1 
+panic = "abort"
