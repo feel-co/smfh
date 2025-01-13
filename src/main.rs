@@ -60,12 +60,14 @@ fn read_manifest(manifest: &str) -> Result<Manifest, Box<dyn Error>> {
 }
 
 fn symlink(file: &File) -> Result<(), Box<dyn Error>> {
+    mkdir(file)?;
     let source = file.source.clone().unwrap();
     unixFs::symlink(Path::new(&source), Path::new(&file.target))?;
     Ok(())
 }
 
 fn copy(file: &File) -> Result<(), Box<dyn Error>> {
+    mkdir(file)?;
     let source = file.source.clone().unwrap();
     fs::copy(Path::new(&source), Path::new(&file.target))?;
     chmod(file)?;
@@ -85,10 +87,31 @@ fn delete_if_exists(path: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn mkdir(file: &File) -> Result<(), Box<dyn Error>> {
-    if fs::symlink_metadata(&file.target).is_err() {
-        create_dir_all(&file.target)?
+    let target = if [Types::file, Types::symlink].contains(&file.r#type) {
+        {
+            let path: &str = &file.target;
+            Path::new(path)
+                .parent()
+                .ok_or("Failed to get parent")?
+                .to_str()
+                .ok_or("Failed to turn path into string")?
+        }
+    } else {
+        &file.target
     };
-    chmod(file)?;
+
+    match fs::symlink_metadata(target) {
+        Err(_) => create_dir_all(target)?,
+        Ok(x) => {
+            if !x.is_dir() {
+                delete_if_exists(target)?;
+                create_dir_all(target)?;
+            }
+        }
+    };
+    if file.r#type == Types::folder {
+        chmod(file)?;
+    };
     Ok(())
 }
 
