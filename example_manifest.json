@@ -26,6 +26,11 @@
     {
       "type": "delete",
       "target": "/home/gerg/Projects/linker/test_delete"
+    },
+    {
+      "type": "recursiveSymlink",
+      "source": "/home/gerg/Projects/linker/test",
+      "target": "/home/gerg/Projects/linker/test_recursive"
     }
   ],
   "clobber_by_default": false,
