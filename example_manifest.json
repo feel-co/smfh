@@ -1,0 +1,33 @@
+{
+  "files": [
+    {
+      "type": "symlink",
+      "source": "/home/gerg/Projects/linker/test_file",
+      "target": "/home/gerg/Projects/linker/test_link",
+      "clobber": true
+    },
+    {
+      "type": "file",
+      "source": "/home/gerg/Projects/linker/test_file",
+      "target": "/home/gerg/Projects/linker/test_copy",
+      "clobber": false
+    },
+    {
+      "type": "file",
+      "source": "/home/gerg/Projects/linker/test_file",
+      "target": "/home/gerg/Projects/linker/test_script",
+      "clobber": false,
+      "permissions": 740
+    },
+    {
+      "type": "folder",
+      "target": "/home/gerg/Projects/linker/test_folder"
+    },
+    {
+      "type": "delete",
+      "target": "/home/gerg/Projects/linker/test_delete"
+    }
+  ],
+  "clobber_by_default": false,
+  "version": 1
+}
