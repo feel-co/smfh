@@ -1,5 +1,6 @@
 use clap::Subcommand;
 use jwalk::WalkDir;
+
 use std::{
     error::Error,
     fs::{self, create_dir_all, rename},
@@ -61,13 +62,13 @@ fn read_manifest(manifest: &str) -> Result<Manifest, Box<dyn Error>> {
 }
 
 fn symlink(file: &File) -> Result<(), Box<dyn Error>> {
-    let source = file.source.clone().unwrap();
+    let source = file.source.as_ref().unwrap();
     unixFs::symlink(Path::new(&source), Path::new(&file.target))?;
     Ok(())
 }
 
 fn copy(file: &File) -> Result<(), Box<dyn Error>> {
-    let source = file.source.clone().unwrap();
+    let source = file.source.as_ref().unwrap();
     fs::copy(Path::new(&source), Path::new(&file.target))?;
     chmod(file)?;
     Ok(())
@@ -92,7 +93,7 @@ fn mkdir(target: &str) -> Result<(), Box<dyn Error>> {
             if !x.is_dir() {
                 return Err(format!("File in way of '{}'", target).into());
             } else {
-                println!("Directory '{}' already exists!", target);
+                println!("Directory '{}' already exists...", target);
             };
         }
     };
@@ -203,14 +204,19 @@ fn handle_activation(file: &File) -> Result<(), Box<dyn Error>> {
 
 fn activate(manifest: Manifest, prefix: String) {
     for file in manifest.files {
-        if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type)
-            && file.source.is_none()
-        {
-            eprintln!(
-                "File '{}', of type {:?} missing source attribute",
-                file.target, file.r#type
-            );
-            continue;
+        if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type) {
+            if file.source.is_none() {
+                eprintln!(
+                    "File '{}', of type {:?} missing source attribute",
+                    file.target, file.r#type
+                );
+                continue;
+            }
+
+            if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
+                eprintln!("File source '{}', does not exist", file.source.unwrap(),);
+                continue;
+            }
         };
 
         if [Types::file, Types::symlink].contains(&file.r#type) {
@@ -223,7 +229,7 @@ fn activate(manifest: Manifest, prefix: String) {
             ) {
                 Ok(x) => x,
                 Err(e) => eprintln!(
-                    "Couldn't mkdir conflicting file '{}'\nReason: {}",
+                    "Couldn't create directory '{}'\n Reason: {}",
                     file.target, e
                 ),
             };
