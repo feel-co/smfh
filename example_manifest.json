@@ -17,11 +17,11 @@
       "source": "/home/gerg/Projects/linker/test_file",
       "target": "/home/gerg/Projects/linker/test_script",
       "clobber": false,
-      "permissions": 740
+      "permissions": 777
     },
     {
-      "type": "folder",
-      "target": "/home/gerg/Projects/linker/test_folder"
+      "type": "directory",
+      "target": "/home/gerg/Projects/linker/test_dir"
     },
     {
       "type": "delete",

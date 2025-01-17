@@ -1,11 +1,13 @@
 use clap::Subcommand;
-use jwalk::WalkDir;
+use jwalk::{DirEntry, WalkDir};
 
 use std::{
     error::Error,
+    ffi::OsString,
     fs::{self, create_dir_all, rename},
+    io::Read,
     os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use clap::Parser;
@@ -18,14 +20,15 @@ struct Args {
     #[command(subcommand)]
     sub_command: SubCommands,
     #[arg()]
-    manifest: String,
-    #[clap(long, short, action)]
-    prefix: Option<String>,
+    manifest: PathBuf,
 }
 
 #[derive(Subcommand, Clone, Debug)]
 enum SubCommands {
-    Activate,
+    Activate {
+        #[clap(long, short, action, default_value = ".backup")]
+        prefix: String,
+    },
     Deactivate,
 }
 
@@ -36,10 +39,10 @@ struct Manifest {
     version: u16,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct File {
-    source: Option<String>,
-    target: String,
+    source: Option<PathBuf>,
+    target: PathBuf,
     r#type: Types,
     clobber: Option<bool>,
     permissions: Option<u32>,
@@ -50,50 +53,76 @@ struct File {
 enum Types {
     symlink,
     file,
-    folder,
+    directory,
     recursiveSymlink,
     delete,
 }
+impl Types {
+    fn order(self) -> u8 {
+        match self {
+            Types::directory => 1,
+            Types::recursiveSymlink => 2,
+            Types::file => 3,
+            Types::symlink => 4,
+            Types::delete => 5,
+        }
+    }
+}
 
-fn read_manifest(manifest: &str) -> Result<Manifest, Box<dyn Error>> {
+fn read_manifest(manifest: &PathBuf) -> Result<Manifest, Box<dyn Error>> {
     let read_manifest = fs::read_to_string(manifest)?;
     let deserialized_manifest: Manifest = serde_json::from_str(&read_manifest)?;
+    println!("Deserialized manifest '{}'", manifest.display());
     Ok(deserialized_manifest)
 }
 
 fn symlink(file: &File) -> Result<(), Box<dyn Error>> {
-    let source = file.source.as_ref().unwrap();
-    unixFs::symlink(Path::new(&source), Path::new(&file.target))?;
+    let source = fs::canonicalize(file.source.as_ref().unwrap())?;
+    unixFs::symlink(&source, &file.target)?;
+    println!(
+        "Symlinked '{}' -> '{}'",
+        source.display(),
+        &file.target.display()
+    );
     Ok(())
 }
 
 fn copy(file: &File) -> Result<(), Box<dyn Error>> {
-    let source = file.source.as_ref().unwrap();
-    fs::copy(Path::new(&source), Path::new(&file.target))?;
+    let source = fs::canonicalize(file.source.as_ref().unwrap())?;
+    fs::copy(&source, &file.target)?;
+    println!(
+        "Copied '{}' -> '{}'",
+        source.display(),
+        &file.target.display()
+    );
     chmod(file)?;
     Ok(())
 }
 
-fn delete_if_exists(path: &str) -> Result<(), Box<dyn Error>> {
+fn delete_if_exists(path: &PathBuf) -> Result<(), Box<dyn Error>> {
     let Ok(metdata) = fs::symlink_metadata(path) else {
         return Ok(());
     };
     if metdata.is_file() || metdata.is_symlink() {
         fs::remove_file(path)?;
+        println!("Deleted '{}'", path.display());
     } else {
         fs::remove_dir_all(path)?;
     }
     Ok(())
 }
 
-fn mkdir(target: &str) -> Result<(), Box<dyn Error>> {
-    match fs::symlink_metadata(target) {
-        Err(_) => create_dir_all(target)?,
+fn mkdir(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    match fs::symlink_metadata(path) {
+        Err(_) => {
+            create_dir_all(path)?;
+            println!("Created directory '{}'", path.display())
+        }
         Ok(x) => {
             if !x.is_dir() {
-                return Err(format!("File in way of '{}'", target).into());
+                return Err(format!("File in way of '{}'", path.display()).into());
             } else {
-                println!("Directory '{}' already exists...", target);
+                println!("Directory '{}' already exists", path.display());
             };
         }
     };
@@ -102,182 +131,345 @@ fn mkdir(target: &str) -> Result<(), Box<dyn Error>> {
 
 fn chmod(file: &File) -> Result<(), Box<dyn Error>> {
     if let Some(x) = file.permissions {
-        let new_perms = fs::Permissions::from_mode(x);
+        let mode = u32::from_str_radix(&format!("0{x:}"), 8)?;
+        let new_perms = fs::Permissions::from_mode(mode);
         if fs::symlink_metadata(&file.target)?.permissions() == new_perms {
             return Ok(());
         };
+        println!(
+            "Setting permissions of: '{:o}' to: '{}'",
+            new_perms.mode(),
+            &file.target.display()
+        );
+
         fs::set_permissions(&file.target, new_perms)?
     }
     Ok(())
 }
 
-fn prefix_move(path: &str, prefix: &str) -> Result<(), Box<dyn Error>> {
+fn prefix_move(path: &PathBuf, prefix: &str) -> Result<(), Box<dyn Error>> {
     let Ok(_) = fs::symlink_metadata(path) else {
         return Ok(());
     };
 
-    let as_path = Path::new(path);
-    let new_path = format!(
-        "{}-{}",
-        prefix,
-        as_path
-            .file_name()
-            .ok_or("Failed to get previous filename")?
-            .to_str()
-            .ok_or("Failed to turn path into string")?
-    );
-    delete_if_exists(&new_path)?;
-    rename(
-        as_path,
-        as_path
-            .parent()
-            .ok_or("Failed to get parent")?
-            .join(new_path),
-    )?;
+    let mut appended_path = OsString::from(prefix);
+    appended_path.push(path.file_name().ok_or("Failed to get file name")?);
+
+    let new_path = PathBuf::from(appended_path);
+
+    if fs::symlink_metadata(&new_path).is_ok() {
+        prefix_move(&new_path, prefix)?
+    };
+
+    rename(path, &new_path)?;
+    println!("Renaming '{}' -> '{}'", path.display(), &new_path.display());
     Ok(())
 }
 
-// How do I clean up residual symlinks
-fn recursive_symlink(file: &File) -> Result<(), Box<dyn Error>> {
-    fn resolve_link(link: PathBuf) -> Result<PathBuf, Box<dyn Error>> {
-        Ok(if link.is_symlink() {
-            resolve_link(fs::read_link(link)?)?
-        } else {
-            link
-        })
-    }
-
-    let base_path = file.source.clone().unwrap();
-    let target_path = Path::new(&file.target);
-    mkdir(&file.target)?;
-    for entry in WalkDir::new(&base_path).follow_links(true) {
-        match entry {
+fn recursive_symlink(file: &File, prefix: &str, clobber: bool) -> Result<(), Box<dyn Error>> {
+    let base_path = file.source.as_ref().unwrap();
+    let walkdir = WalkDir::new(base_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|f| match f {
+            Ok(x) => Some(x),
             Err(e) => {
                 eprintln!(
                     "Recursive file walking error on base path: {}\n{}",
-                    base_path, e
+                    base_path.display(),
+                    e
                 );
-                continue;
+                None
             }
-            Ok(ref x) => {
-                let target_file = target_path.join(x.path().strip_prefix(&base_path)?);
-                if x.path().is_dir() {
-                    mkdir(
-                        target_file
-                            .to_str()
-                            .ok_or("Failed to turn path into string")?,
-                    )?;
-                    continue;
-                } else {
-                    delete_if_exists(
-                        target_file
-                            .to_str()
-                            .ok_or("Failed to turn path into string")?,
-                    )?;
-                    if x.path_is_symlink() {
-                        unixFs::symlink(resolve_link(x.path())?, &target_file)?;
-                    }
-                };
-            }
-        };
-        let entry = entry.unwrap();
-        println!("{}", entry.path().display());
+        });
+
+    for entry in walkdir {
+        let target_file = &file.target.join(entry.path().strip_prefix(base_path)?);
+
+        if entry.file_type().is_dir() {
+            mkdir(target_file)?;
+            continue;
+        }
+
+        delete_or_move(target_file, prefix, clobber)?;
+        unixFs::symlink(fs::canonicalize(entry.path())?, target_file)?;
+
+        println!(
+            "Symlinked '{}' -> '{}'",
+            entry.path().display(),
+            target_file.display()
+        );
     }
     Ok(())
 }
 
-fn handle_activation(file: &File) -> Result<(), Box<dyn Error>> {
-    match file.r#type {
-        Types::symlink => symlink(file),
-        Types::file => copy(file),
-        Types::delete => delete_if_exists(&file.target),
-        Types::folder => {
-            {
-                mkdir(&file.target)?;
-                chmod(file)?;
+fn recursive_cleanup(file: &File) {
+    fn handle_entry(
+        file: &File,
+        entry: &DirEntry<((), ())>,
+        base_path: &PathBuf,
+        dirs: &mut Vec<(PathBuf, usize)>,
+    ) -> Result<(), Box<dyn Error>> {
+        let path = entry.path();
+        let target_file = file.target.join(path.strip_prefix(base_path)?);
+
+        let metadata = fs::symlink_metadata(&target_file)?;
+
+        if metadata.is_symlink() && entry.file_type().is_file() {
+            if fs::canonicalize(&target_file)? == fs::canonicalize(entry.path())? {
+                fs::remove_file(&target_file)?;
             };
-            Ok(())
-        }
-        Types::recursiveSymlink => recursive_symlink(file),
+        } else if metadata.is_file() {
+            println!(
+                "Ignoring file in recursiveSymlink directory: '{}'",
+                &target_file.display()
+            )
+        } else if metadata.is_dir() && entry.file_type().is_dir() {
+            dirs.push((target_file.clone(), entry.depth()));
+            // Don't println on directories
+            // they'll be listed on the rmdir call
+            return Ok(());
+        } else {
+            return Err("File is not symlink, directory, or file".into());
+        };
+
+        println!(
+            "Deleting '{}' -> '{}'",
+            entry.path().display(),
+            target_file.display()
+        );
+        Ok(())
     }
+
+    let base_path = file.source.as_ref().unwrap();
+    let walkdir = WalkDir::new(base_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|f| match f {
+            Ok(x) => Some(x),
+            Err(e) => {
+                eprintln!(
+                    "Recursive file walking error on base path: '{}'\n{}",
+                    base_path.display(),
+                    e
+                );
+                None
+            }
+        });
+
+    let mut dirs: Vec<(PathBuf, usize)> = vec![];
+
+    for entry in walkdir {
+        if let Err(e) = handle_entry(file, &entry, base_path, &mut dirs) {
+            eprintln!(
+                "Failed to remove file '{}'\nReason: {}",
+                entry.path().display(),
+                e
+            )
+        };
+    }
+    dirs.sort_by(|a, b| b.1.cmp(&a.1));
+    dirs.into_iter().for_each(|dir| {
+        if let Err(e) = rmdir(&dir.0) {
+            eprintln!(
+                "Didn't remove directory '{}' of recursiveSymlink '{}'\n Error: {}",
+                dir.0.display(),
+                base_path.display(),
+                e
+            )
+        };
+    });
 }
 
-fn activate(manifest: Manifest, prefix: String) {
+fn delete_or_move(path: &PathBuf, prefix: &str, clobber: bool) -> Result<(), Box<dyn Error>> {
+    match clobber {
+        true => delete_if_exists(path)?,
+        false => prefix_move(path, prefix)?,
+    }
+    Ok(())
+}
+
+fn rmdir(path: &PathBuf) -> Result<(), Box<dyn Error>> {
+    let Ok(metdata) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if !metdata.is_dir() {
+        return Err(format!("Path '{}' is not a directory", path.display()).into());
+    }
+    fs::remove_dir(path)?;
+    println!("Deleting directory '{}'", path.display());
+    Ok(())
+}
+
+fn hash_file(filepath: &PathBuf) -> Result<u64, Box<dyn Error>> {
+    let mut file = std::fs::File::open(filepath)?;
+    let mut buffer = Vec::new();
+    buffer.clear();
+    file.read_to_end(&mut buffer)?;
+    Ok(xxhash_rust::xxh3::xxh3_64(&buffer))
+}
+
+fn type_checked_delete(file: &File) -> Result<(), Box<dyn Error>> {
+    let metadata = fs::symlink_metadata(&file.target)?;
+
+    if metadata.is_symlink() && file.r#type == Types::symlink {
+        if fs::canonicalize(&file.target)? == fs::canonicalize(file.source.as_ref().ok_or("")?)? {
+            fs::remove_file(&file.target)?;
+        };
+    } else if metadata.is_file() && file.r#type == Types::file {
+        let Ok(target_hash) = hash_file(&file.target) else {
+            return Err("Failed to hash target".into());
+        };
+        let Ok(source_hash) = hash_file(file.source.as_ref().unwrap()) else {
+            return Err("Failed to hash source".into());
+        };
+        if target_hash == source_hash {
+            fs::remove_file(&file.target)?;
+        }
+    } else {
+        return Err("File is not symlink, directory, or file".into());
+    };
+    Ok(())
+}
+
+fn activate(mut manifest: Manifest, prefix: String) {
+    manifest
+        .files
+        .sort_by(|a, b| a.r#type.order().cmp(&b.r#type.order()));
+
     for file in manifest.files {
         if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type) {
             if file.source.is_none() {
                 eprintln!(
                     "File '{}', of type {:?} missing source attribute",
-                    file.target, file.r#type
+                    file.target.display(),
+                    file.r#type
                 );
                 continue;
             }
 
             if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
-                eprintln!("File source '{}', does not exist", file.source.unwrap(),);
+                eprintln!(
+                    "File source '{}', does not exist",
+                    file.source.unwrap().display(),
+                );
                 continue;
             }
         };
 
         if [Types::file, Types::symlink].contains(&file.r#type) {
             match mkdir(
-                Path::new(&file.target)
+                &file
+                    .target
                     .parent()
                     .expect("Failed to get parent")
-                    .to_str()
-                    .expect("Failed to turn path into string"),
+                    .to_path_buf(),
             ) {
                 Ok(x) => x,
                 Err(e) => eprintln!(
                     "Couldn't create directory '{}'\n Reason: {}",
-                    file.target, e
+                    file.target.display(),
+                    e
                 ),
             };
         };
+        let clobber = file.clobber.unwrap_or(manifest.clobber_by_default);
 
-        if ![Types::delete, Types::folder, Types::recursiveSymlink].contains(&file.r#type) {
-            let cleanup = match file.clobber.unwrap_or(manifest.clobber_by_default) {
-                true => delete_if_exists(&file.target),
-                false => prefix_move(&file.target, &prefix),
-            };
-            match cleanup {
-                Ok(x) => x,
-                Err(e) => eprintln!(
+        if ![Types::delete, Types::directory, Types::recursiveSymlink].contains(&file.r#type) {
+            if let Err(e) = delete_or_move(&file.target, &prefix, clobber) {
+                eprintln!(
                     "Couldn't move/delete conflicting file '{}'\nReason: {}",
-                    file.target, e
-                ),
-            }
+                    file.target.display(),
+                    e
+                );
+            };
         }
 
-        match handle_activation(&file) {
+        let activation = match file.r#type {
+            Types::symlink => symlink(&file),
+            Types::file => copy(&file),
+            Types::delete => delete_if_exists(&file.target),
+            Types::directory => match mkdir(&file.target) {
+                Err(e) => Err(e),
+                Ok(_) => chmod(&file),
+            },
+            Types::recursiveSymlink => recursive_symlink(&file, &prefix, clobber),
+        };
+
+        match activation {
             Ok(x) => x,
-            Err(e) => eprintln!("Failed to handle '{}'\nReason: {}", file.target, e),
+            Err(e) => eprintln!(
+                "Failed to handle '{}'\nReason: {}",
+                file.target.display(),
+                e
+            ),
         };
     }
 }
-fn deactivate(manifest: Manifest) {
+
+fn deactivate(mut manifest: Manifest) {
+    manifest
+        .files
+        .sort_by(|a, b| b.r#type.order().cmp(&a.r#type.order()));
+
     for file in manifest.files {
-        if [Types::delete, Types::folder].contains(&file.r#type) {
-            continue;
-        }
-        match delete_if_exists(&file.target) {
-            Ok(x) => x,
-            Err(e) => eprintln!("Didn't cleanup file '{}'\nReason: {}", file.target, e),
-        }
+        if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type) {
+            if file.source.is_none() {
+                eprintln!(
+                    "File '{}', of type {:?} missing source attribute",
+                    file.target.display(),
+                    file.r#type
+                );
+                continue;
+            }
+
+            if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
+                println!("File '{}', already deleted", file.source.unwrap().display(),);
+                continue;
+            }
+        };
+
+        if let Err(e) = match file.r#type {
+            // delete is no-op on deactivation
+            Types::delete => continue,
+            // delete only if directory is empty
+            Types::directory => rmdir(&file.target),
+            // this has it's own error handling
+            Types::recursiveSymlink => {
+                recursive_cleanup(&file);
+                Ok(())
+            }
+            // delete only if types match
+            Types::symlink => type_checked_delete(&file),
+            // delete only if types match
+            Types::file => type_checked_delete(&file),
+        } {
+            eprintln!(
+                "Didn't cleanup file '{}'\nReason: {}",
+                file.target.display(),
+                e
+            )
+        };
     }
 }
 
 fn main() {
+    const VERSION: u16 = 1;
     let args = Args::parse();
 
     let manifest = match read_manifest(&args.manifest) {
         Ok(x) => x,
         Err(e) => panic!("Failed to read or parse manifest!\n{}", e),
     };
-    println!("Deserialized manifest {}", args.manifest);
-    println!("Manifest version {}", manifest.version);
+    println!("Deserialized manifest: '{}'", args.manifest.display());
+    println!("Manifest version: '{}'", manifest.version);
+    println!("Program version: '{}'", VERSION);
+    if manifest.version != VERSION {
+        panic!("Version mismatch!\n Program and manifest version must be the same");
+    };
+
     match args.sub_command {
         SubCommands::Deactivate => deactivate(manifest),
-        SubCommands::Activate => activate(manifest, args.prefix.unwrap_or("hjlem".to_string())),
+        SubCommands::Activate { prefix } => activate(manifest, prefix),
     }
 }
