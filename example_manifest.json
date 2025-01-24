@@ -17,7 +17,7 @@
       "source": "/home/gerg/Projects/linker/test_file",
       "target": "/home/gerg/Projects/linker/test_script",
       "clobber": false,
-      "permissions": 777
+      "permissions": "777"
     },
     {
       "type": "directory",

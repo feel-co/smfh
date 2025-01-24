@@ -11,7 +11,9 @@ use std::{
 };
 
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+};
 use std::os::unix::fs as unixFs;
 
 #[derive(Parser, Debug)]
@@ -39,32 +41,46 @@ struct Manifest {
     version: u16,
 }
 
+fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
+    if let Some(str) = Option::<String>::deserialize(deserializer)? {
+        match u32::from_str_radix(&str, 8) {
+            Ok(x) => Ok(Some(x)),
+            Err(e) => Err(serde::de::Error::custom(e)),
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 struct File {
     source: Option<PathBuf>,
     target: PathBuf,
     r#type: Types,
     clobber: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_octal")]
     permissions: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(non_camel_case_types)]
+#[serde(rename_all = "camelCase")]
 enum Types {
-    symlink,
-    file,
-    directory,
-    recursiveSymlink,
-    delete,
+    Symlink,
+    File,
+    Directory,
+    RecursiveSymlink,
+    Delete,
+    Chmod,
 }
 impl Types {
     fn order(self) -> u8 {
         match self {
-            Types::directory => 1,
-            Types::recursiveSymlink => 2,
-            Types::file => 3,
-            Types::symlink => 4,
-            Types::delete => 5,
+            Types::Directory => 1,
+            Types::RecursiveSymlink => 2,
+            Types::File => 3,
+            Types::Symlink => 4,
+            Types::Chmod=> 5,
+            Types::Delete => 6,
         }
     }
 }
@@ -131,8 +147,7 @@ fn mkdir(path: &PathBuf) -> Result<(), Box<dyn Error>> {
 
 fn chmod(file: &File) -> Result<(), Box<dyn Error>> {
     if let Some(x) = file.permissions {
-        let mode = u32::from_str_radix(&format!("0{x:}"), 8)?;
-        let new_perms = fs::Permissions::from_mode(mode);
+        let new_perms = fs::Permissions::from_mode(x);
         if fs::symlink_metadata(&file.target)?.permissions() == new_perms {
             return Ok(());
         };
@@ -312,11 +327,11 @@ fn hash_file(filepath: &PathBuf) -> Result<u64, Box<dyn Error>> {
 fn type_checked_delete(file: &File) -> Result<(), Box<dyn Error>> {
     let metadata = fs::symlink_metadata(&file.target)?;
 
-    if metadata.is_symlink() && file.r#type == Types::symlink {
+    if metadata.is_symlink() && file.r#type == Types::Symlink {
         if fs::canonicalize(&file.target)? == fs::canonicalize(file.source.as_ref().ok_or("")?)? {
             fs::remove_file(&file.target)?;
         };
-    } else if metadata.is_file() && file.r#type == Types::file {
+    } else if metadata.is_file() && file.r#type == Types::File {
         let Ok(target_hash) = hash_file(&file.target) else {
             return Err("Failed to hash target".into());
         };
@@ -338,7 +353,7 @@ fn activate(mut manifest: Manifest, prefix: String) {
         .sort_by(|a, b| a.r#type.order().cmp(&b.r#type.order()));
 
     for file in manifest.files {
-        if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type) {
+        if [Types::Symlink, Types::File, Types::RecursiveSymlink].contains(&file.r#type) {
             if file.source.is_none() {
                 eprintln!(
                     "File '{}', of type {:?} missing source attribute",
@@ -357,7 +372,7 @@ fn activate(mut manifest: Manifest, prefix: String) {
             }
         };
 
-        if [Types::file, Types::symlink].contains(&file.r#type) {
+        if [Types::File, Types::Symlink].contains(&file.r#type) {
             match mkdir(
                 &file
                     .target
@@ -375,7 +390,7 @@ fn activate(mut manifest: Manifest, prefix: String) {
         };
         let clobber = file.clobber.unwrap_or(manifest.clobber_by_default);
 
-        if ![Types::delete, Types::directory, Types::recursiveSymlink].contains(&file.r#type) {
+        if ![Types::Delete, Types::Chmod, Types::Directory, Types::RecursiveSymlink].contains(&file.r#type) {
             if let Err(e) = delete_or_move(&file.target, &prefix, clobber) {
                 eprintln!(
                     "Couldn't move/delete conflicting file '{}'\nReason: {}",
@@ -386,14 +401,15 @@ fn activate(mut manifest: Manifest, prefix: String) {
         }
 
         let activation = match file.r#type {
-            Types::symlink => symlink(&file),
-            Types::file => copy(&file),
-            Types::delete => delete_if_exists(&file.target),
-            Types::directory => match mkdir(&file.target) {
+            Types::Directory => match mkdir(&file.target) {
                 Err(e) => Err(e),
                 Ok(_) => chmod(&file),
             },
-            Types::recursiveSymlink => recursive_symlink(&file, &prefix, clobber),
+            Types::RecursiveSymlink => recursive_symlink(&file, &prefix, clobber),
+            Types::File => copy(&file),
+            Types::Symlink => symlink(&file),
+            Types::Chmod=> chmod(&file),
+            Types::Delete => delete_if_exists(&file.target),
         };
 
         match activation {
@@ -413,7 +429,7 @@ fn deactivate(mut manifest: Manifest) {
         .sort_by(|a, b| b.r#type.order().cmp(&a.r#type.order()));
 
     for file in manifest.files {
-        if [Types::symlink, Types::file, Types::recursiveSymlink].contains(&file.r#type) {
+        if [Types::Symlink, Types::File, Types::RecursiveSymlink].contains(&file.r#type) {
             if file.source.is_none() {
                 eprintln!(
                     "File '{}', of type {:?} missing source attribute",
@@ -430,19 +446,20 @@ fn deactivate(mut manifest: Manifest) {
         };
 
         if let Err(e) = match file.r#type {
-            // delete is no-op on deactivation
-            Types::delete => continue,
+            // delete and chmod are a no-op on deactivation
+            Types::Delete => continue,
+            Types::Chmod => continue,
             // delete only if directory is empty
-            Types::directory => rmdir(&file.target),
+            Types::Directory => rmdir(&file.target),
             // this has it's own error handling
-            Types::recursiveSymlink => {
+            Types::RecursiveSymlink => {
                 recursive_cleanup(&file);
                 Ok(())
             }
             // delete only if types match
-            Types::symlink => type_checked_delete(&file),
+            Types::Symlink => type_checked_delete(&file),
             // delete only if types match
-            Types::file => type_checked_delete(&file),
+            Types::File => type_checked_delete(&file),
         } {
             eprintln!(
                 "Didn't cleanup file '{}'\nReason: {}",
