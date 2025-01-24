@@ -2,6 +2,7 @@ use clap::Subcommand;
 use jwalk::{DirEntry, WalkDir};
 
 use std::{
+    cmp::Ordering,
     error::Error,
     ffi::OsString,
     fs::{self, create_dir_all, rename},
@@ -11,10 +12,11 @@ use std::{
 };
 
 use clap::Parser;
-use serde::{
-    Deserialize, Deserializer, Serialize,
-};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeSet;
 use std::os::unix::fs as unixFs;
+
+const VERSION: u16 = 1;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -32,6 +34,12 @@ enum SubCommands {
         prefix: String,
     },
     Deactivate,
+    Diff {
+        #[clap(long, short, action, default_value = ".backup")]
+        prefix: String,
+        #[arg()]
+        old_manifest: PathBuf,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,15 +60,25 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 struct File {
     source: Option<PathBuf>,
     target: PathBuf,
-    #[serde(rename="type")]
+    #[serde(rename = "type")]
     kind: Kinds,
     clobber: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_octal")]
     permissions: Option<u32>,
+}
+impl Ord for File {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.kind.cmp(&other.kind)
+    }
+}
+impl PartialOrd for File {
+    fn partial_cmp(&self, other: &File) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -73,16 +91,24 @@ enum Kinds {
     Delete,
     Chmod,
 }
-impl Kinds {
-    fn order(self) -> u8 {
-        match self {
-            Kinds::Directory => 1,
-            Kinds::RecursiveSymlink => 2,
-            Kinds::File => 3,
-            Kinds::Symlink => 4,
-            Kinds::Chmod=> 5,
-            Kinds::Delete => 6,
+impl Ord for Kinds {
+    fn cmp(&self, other: &Self) -> Ordering {
+        fn value(kind: &Kinds) -> u8 {
+            match kind {
+                Kinds::Directory => 1,
+                Kinds::RecursiveSymlink => 2,
+                Kinds::File => 3,
+                Kinds::Symlink => 4,
+                Kinds::Chmod => 5,
+                Kinds::Delete => 6,
+            }
         }
+        value(self).cmp(&value(other))
+    }
+}
+impl PartialOrd for Kinds {
+    fn partial_cmp(&self, other: &Kinds) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -349,9 +375,7 @@ fn type_checked_delete(file: &File) -> Result<(), Box<dyn Error>> {
 }
 
 fn activate(mut manifest: Manifest, prefix: String) {
-    manifest
-        .files
-        .sort_by(|a, b| a.kind.order().cmp(&b.kind.order()));
+    manifest.files.sort_by_key(|k| k.kind);
 
     for file in manifest.files {
         if [Kinds::Symlink, Kinds::File, Kinds::RecursiveSymlink].contains(&file.kind) {
@@ -391,7 +415,14 @@ fn activate(mut manifest: Manifest, prefix: String) {
         };
         let clobber = file.clobber.unwrap_or(manifest.clobber_by_default);
 
-        if ![Kinds::Delete, Kinds::Chmod, Kinds::Directory, Kinds::RecursiveSymlink].contains(&file.kind) {
+        if ![
+            Kinds::Delete,
+            Kinds::Chmod,
+            Kinds::Directory,
+            Kinds::RecursiveSymlink,
+        ]
+        .contains(&file.kind)
+        {
             if let Err(e) = delete_or_move(&file.target, &prefix, clobber) {
                 eprintln!(
                     "Couldn't move/delete conflicting file '{}'\nReason: {}",
@@ -409,7 +440,7 @@ fn activate(mut manifest: Manifest, prefix: String) {
             Kinds::RecursiveSymlink => recursive_symlink(&file, &prefix, clobber),
             Kinds::File => copy(&file),
             Kinds::Symlink => symlink(&file),
-            Kinds::Chmod=> chmod(&file),
+            Kinds::Chmod => chmod(&file),
             Kinds::Delete => delete_if_exists(&file.target),
         };
 
@@ -425,9 +456,8 @@ fn activate(mut manifest: Manifest, prefix: String) {
 }
 
 fn deactivate(mut manifest: Manifest) {
-    manifest
-        .files
-        .sort_by(|a, b| b.kind.order().cmp(&a.kind.order()));
+    manifest.files.sort_by_key(|k| k.kind);
+    manifest.files.reverse();
 
     for file in manifest.files {
         if [Kinds::Symlink, Kinds::File, Kinds::RecursiveSymlink].contains(&file.kind) {
@@ -471,8 +501,27 @@ fn deactivate(mut manifest: Manifest) {
     }
 }
 
+fn diff(mut manifest: Manifest, old_manifest_path: &PathBuf, prefix: String) {
+    let mut old_manifest = match read_manifest(old_manifest_path) {
+        Ok(x) => x,
+        Err(e) => panic!("Failed to read or parse manifest!\n{}", e),
+    };
+    println!("Deserialized manifest: '{}'", old_manifest_path.display());
+    println!("Manifest version: '{}'", old_manifest.version);
+    println!("Program version: '{}'", VERSION);
+
+    let old = BTreeSet::from_iter(old_manifest.files);
+    let new = BTreeSet::from_iter(manifest.files);
+
+    manifest.files = Vec::from_iter(new.difference(&old).cloned());
+    old_manifest.files = Vec::from_iter(old.difference(&new).cloned());
+    dbg!(&manifest.files);
+    dbg!(&old_manifest.files);
+    deactivate(old_manifest);
+    activate(manifest, prefix);
+}
+
 fn main() {
-    const VERSION: u16 = 1;
     let args = Args::parse();
 
     let manifest = match read_manifest(&args.manifest) {
@@ -489,5 +538,9 @@ fn main() {
     match args.sub_command {
         SubCommands::Deactivate => deactivate(manifest),
         SubCommands::Activate { prefix } => activate(manifest, prefix),
+        SubCommands::Diff {
+            prefix,
+            old_manifest,
+        } => diff(manifest, &old_manifest, prefix),
     }
 }
