@@ -3,18 +3,18 @@ use jwalk::{DirEntry, WalkDir};
 
 use std::{
     cmp::Ordering,
+    collections::BTreeSet,
     error::Error,
     ffi::OsString,
     fs::{self, create_dir_all, rename},
     io::Read,
+    os::unix::fs as unixFs,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
 };
 
 use clap::Parser;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::BTreeSet;
-use std::os::unix::fs as unixFs;
 
 const VERSION: u16 = 1;
 
@@ -44,7 +44,7 @@ enum SubCommands {
 
 #[derive(Serialize, Deserialize)]
 struct Manifest {
-    files: Vec<File>,
+    files: BTreeSet<File>,
     clobber_by_default: bool,
     version: u16,
 }
@@ -374,9 +374,7 @@ fn type_checked_delete(file: &File) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn activate(mut manifest: Manifest, prefix: String) {
-    manifest.files.sort_by_key(|k| k.kind);
-
+fn activate(manifest: Manifest, prefix: String) {
     for file in manifest.files {
         if [Kinds::Symlink, Kinds::File, Kinds::RecursiveSymlink].contains(&file.kind) {
             if file.source.is_none() {
@@ -455,11 +453,8 @@ fn activate(mut manifest: Manifest, prefix: String) {
     }
 }
 
-fn deactivate(mut manifest: Manifest) {
-    manifest.files.sort_by_key(|k| k.kind);
-    manifest.files.reverse();
-
-    for file in manifest.files {
+fn deactivate(manifest: Manifest) {
+    for file in manifest.files.into_iter().rev() {
         if [Kinds::Symlink, Kinds::File, Kinds::RecursiveSymlink].contains(&file.kind) {
             if file.source.is_none() {
                 eprintln!(
@@ -506,19 +501,24 @@ fn diff(mut manifest: Manifest, old_manifest_path: &PathBuf, prefix: String) {
         Ok(x) => x,
         Err(e) => panic!("Failed to read or parse manifest!\n{}", e),
     };
+
     println!("Deserialized manifest: '{}'", old_manifest_path.display());
     println!("Manifest version: '{}'", old_manifest.version);
     println!("Program version: '{}'", VERSION);
 
-    let old = BTreeSet::from_iter(old_manifest.files);
-    let new = BTreeSet::from_iter(manifest.files);
+    let mut intersection: BTreeSet<File> = BTreeSet::new();
 
-    manifest.files = Vec::from_iter(new.difference(&old).cloned());
-    old_manifest.files = Vec::from_iter(old.difference(&new).cloned());
-    dbg!(&manifest.files);
-    dbg!(&old_manifest.files);
+    old_manifest.files.retain(|f| {
+        let contains = manifest.files.remove(f);
+        if contains {
+            intersection.insert(f.clone());
+        }
+        !contains
+    });
+
     deactivate(old_manifest);
     activate(manifest, prefix);
+    //TODO: Verify same files
 }
 
 fn main() {
