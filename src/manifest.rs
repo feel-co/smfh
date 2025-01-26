@@ -1,13 +1,17 @@
-use std::{cmp::Ordering, error::Error, fs, path::{Path, PathBuf}};
-use itertools::Itertools;
-use serde::{Deserialize, Deserializer, Serialize};
 use crate::file_util;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::{
+    cmp::Ordering,
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub const VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
-    pub files: Vec<File>,
+    pub files: BTreeSet<File>,
     pub clobber_by_default: bool,
     pub version: u16,
 }
@@ -80,16 +84,30 @@ impl PartialOrd for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path) -> Result<Manifest, Box<dyn Error>> {
-        let read_manifest = fs::read_to_string(manifest_path)?;
-        let deserialized_manifest: Manifest = serde_json::from_str(&read_manifest)?;
-        println!("Deserialized manifest '{}'", manifest_path.display());
-        Ok(deserialized_manifest)
+    pub fn read(manifest_path: &Path) -> Manifest {
+        let read_manifest = fs::read_to_string(manifest_path).expect("Failed to read manifest");
+        let deserialized_manifest: Manifest =
+            serde_json::from_str(&read_manifest).expect("Failed to read manifest");
+
+        println!("Deserialized manifest: '{}'", manifest_path.display());
+        println!("Manifest version: '{}'", deserialized_manifest.version);
+        println!("Program version: '{}'", VERSION);
+
+        if deserialized_manifest.version != VERSION {
+            panic!("Version mismatch!\n Program and manifest version must be the same");
+        };
+        deserialized_manifest
     }
 
     pub fn activate(&self, prefix: &str) {
-        for file in self.files.iter().sorted_by_key(|k| k.kind) {
-            if [FileKind::Symlink, FileKind::File, FileKind::RecursiveSymlink].contains(&file.kind) {
+        for file in self.files.iter() {
+            if [
+                FileKind::Symlink,
+                FileKind::File,
+                FileKind::RecursiveSymlink,
+            ]
+            .contains(&file.kind)
+            {
                 if file.source.is_none() {
                     eprintln!(
                         "File '{}', of type {:?} missing source attribute",
@@ -109,12 +127,7 @@ impl Manifest {
             };
 
             if [FileKind::File, FileKind::Symlink].contains(&file.kind) {
-                match file_util::mkdir(
-                    file
-                        .target
-                        .parent()
-                        .expect("Failed to get parent"),
-                ) {
+                match file_util::mkdir(file.target.parent().expect("Failed to get parent")) {
                     Ok(x) => x,
                     Err(e) => eprintln!(
                         "Couldn't create directory '{}'\n Reason: {}",
@@ -148,10 +161,10 @@ impl Manifest {
                     Ok(_) => file_util::chmod(file),
                 },
                 FileKind::RecursiveSymlink => file_util::recursive_symlink(file, prefix, clobber),
-                FileKind::File    => file_util::copy(file),
+                FileKind::File => file_util::copy(file),
                 FileKind::Symlink => file_util::symlink(file),
-                FileKind::Chmod   => file_util::chmod(file),
-                FileKind::Delete  => file_util::delete_if_exists(&file.target),
+                FileKind::Chmod => file_util::chmod(file),
+                FileKind::Delete => file_util::delete_if_exists(&file.target),
             };
 
             match activation {
@@ -166,8 +179,14 @@ impl Manifest {
     }
 
     pub fn deactivate(&self) {
-        for file in self.files.iter().sorted_by_key(|&k| k.kind).rev() {
-            if [FileKind::Symlink, FileKind::File, FileKind::RecursiveSymlink].contains(&file.kind) {
+        for file in self.files.iter().rev() {
+            if [
+                FileKind::Symlink,
+                FileKind::File,
+                FileKind::RecursiveSymlink,
+            ]
+            .contains(&file.kind)
+            {
                 if file.source.is_none() {
                     eprintln!(
                         "File '{}', of type {:?} missing source attribute",
@@ -178,7 +197,10 @@ impl Manifest {
                 }
 
                 if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
-                    println!("File '{}' already deleted", file.source.as_ref().unwrap().display());
+                    println!(
+                        "File '{}' already deleted",
+                        file.source.as_ref().unwrap().display()
+                    );
                     continue;
                 }
             };
@@ -209,13 +231,15 @@ impl Manifest {
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {
-        let mut same = vec![];
+        let mut intersection: BTreeSet<File> = BTreeSet::new();
 
         old_manifest.files.retain(|f| {
-            same.push(f.clone());
-            !self.files.contains(f)
+            let contains = self.files.remove(f);
+            if contains {
+                intersection.insert(f.clone());
+            }
+            !contains
         });
-        self.files.retain(|f| !same.contains(f));
 
         old_manifest.deactivate();
         self.activate(prefix);
@@ -223,5 +247,3 @@ impl Manifest {
         //TODO: Verify same files
     }
 }
-
-
