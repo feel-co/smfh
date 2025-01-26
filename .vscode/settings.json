@@ -1,6 +1,0 @@
-{
-  "editor.tabSize": 4,
-  "editor.detectIndentation": false,
-"editor.insertSpaces": true,
-"rust-analyzer.check.command": "clippy"
-}
