@@ -1,12 +1,18 @@
 {
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    systems.url = "github:nix-systems/default";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
+    nixpkgs = {
+      type = "github";
+      owner = "NixOS";
+      repo = "nixpkgs";
+      ref = "nixos-unstable";
     };
+    systems = {
+      type = "github";
+      owner = "nix-systems";
+      repo = "default";
+    };
+
   };
 
   outputs =
@@ -14,7 +20,6 @@
       nixpkgs,
       self,
       systems,
-      fenix,
     }:
     let
       eachSystem = nixpkgs.lib.genAttrs (import systems);
@@ -38,16 +43,9 @@
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
-            packages = [
-              (fenix.packages.${system}.stable.withComponents [
-                "cargo"
-                "clippy"
-                "rust-src"
-                "rustc"
-                "rustfmt"
-                "rust-analyzer"
-              ])
-            ];
+            packages = builtins.attrValues {
+              inherit (pkgs) rust-analyzer rustfmt clippy;
+            };
           };
         }
       );
