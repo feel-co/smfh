@@ -1,5 +1,9 @@
 use std::path::PathBuf;
-use clap::{Parser, Subcommand};
+
+use clap::{
+    Parser,
+    Subcommand,
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -24,7 +28,6 @@ pub enum Subcommands {
     Diff {
         #[clap(long, short, action, default_value = ".backup")]
         prefix: String,
-
 
         #[arg()]
         manifest: PathBuf,

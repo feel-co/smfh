@@ -1,11 +1,27 @@
-use std::error::Error;
-use std::ffi::OsString;
-use std::fs;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::os::unix::fs::{self as unixFs, PermissionsExt};
-use jwalk::{DirEntry, WalkDir};
-use crate::manifest::{File, FileKind};
+use std::{
+    error::Error,
+    ffi::OsString,
+    fs,
+    io::Read,
+    os::unix::fs::{
+        self as unixFs,
+        PermissionsExt,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
+};
+
+use jwalk::{
+    DirEntry,
+    WalkDir,
+};
+
+use crate::manifest::{
+    File,
+    FileKind,
+};
 
 pub fn symlink(file: &File) -> Result<(), Box<dyn Error>> {
     let source = fs::canonicalize(file.source.as_ref().unwrap())?;

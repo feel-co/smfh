@@ -1,10 +1,14 @@
 use clap::Parser;
 
-mod args;
 mod file_util;
-mod manifest;
 
-use args::{Args, Subcommands};
+mod args;
+use args::{
+    Args,
+    Subcommands,
+};
+
+mod manifest;
 use manifest::Manifest;
 
 fn main() {

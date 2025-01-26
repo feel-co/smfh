@@ -1,11 +1,20 @@
-use crate::file_util;
-use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     cmp::Ordering,
     collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    path::{
+        Path,
+        PathBuf,
+    },
 };
+
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+};
+
+use crate::file_util;
 
 pub const VERSION: u16 = 1;
 
