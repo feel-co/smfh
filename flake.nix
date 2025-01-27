@@ -44,8 +44,8 @@
             inherit (pkgs.rust-bin.nightly.latest) rustfmt;
           };
           text = ''
-            fd '.*\.nix' . -X nixfmt {} \;
-            fd '.*\.rs' . -X rustfmt {} \;
+            fd "$@" -t f -e nix -X nixfmt '{}'
+            fd "$@" -t f -e rs -X rustfmt '{}'
           '';
         }
       );

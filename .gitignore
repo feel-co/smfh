@@ -1,5 +1,4 @@
 target
 .direnv
 *result*
-test*
 .backup*
