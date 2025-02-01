@@ -1,26 +1,33 @@
+use crate::file_util::{
+    self,
+};
+use derivative::Derivative;
+use log::{
+    error,
+    info,
+};
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+};
 use std::{
     cmp::Ordering,
-    collections::BTreeSet,
-    fs,
+    fs::{
+        self,
+        Metadata,
+    },
     path::{
         Path,
         PathBuf,
     },
 };
 
-use serde::{
-    Deserialize,
-    Deserializer,
-    Serialize,
-};
-
-use crate::file_util;
-
 pub const VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
-    pub files: BTreeSet<File>,
+    pub files: Vec<File>,
     pub clobber_by_default: bool,
     pub version: u16,
 }
@@ -36,7 +43,8 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Derivative)]
+#[derivative(PartialEq, Eq)]
 pub struct File {
     pub source: Option<PathBuf>,
     pub target: PathBuf,
@@ -45,29 +53,23 @@ pub struct File {
     pub clobber: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_octal")]
     pub permissions: Option<u32>,
-}
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
 
-impl Ord for File {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.kind.cmp(&other.kind)
-    }
-}
-
-impl PartialOrd for File {
-    fn partial_cmp(&self, other: &File) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
+    #[serde(skip)]
+    #[derivative(PartialEq = "ignore")]
+    pub metadata: Option<Metadata>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
-    Symlink,
-    File,
     Directory,
     RecursiveSymlink,
-    Delete,
+    File,
+    Symlink,
     Chmod,
+    Delete,
 }
 
 impl Ord for FileKind {
@@ -79,7 +81,7 @@ impl Ord for FileKind {
                 FileKind::File => 3,
                 FileKind::Symlink => 4,
                 FileKind::Chmod => 5,
-                FileKind::Delete => 6,
+                FileKind::Delete => 7,
             }
         }
         value(self).cmp(&value(other))
@@ -98,9 +100,9 @@ impl Manifest {
         let deserialized_manifest: Manifest =
             serde_json::from_str(&read_manifest).expect("Failed to read manifest");
 
-        println!("Deserialized manifest: '{}'", manifest_path.display());
-        println!("Manifest version: '{}'", deserialized_manifest.version);
-        println!("Program version: '{}'", VERSION);
+        info!("Deserialized manifest: '{}'", manifest_path.display());
+        info!("Manifest version: '{}'", deserialized_manifest.version);
+        info!("Program version: '{}'", VERSION);
 
         if deserialized_manifest.version != VERSION {
             panic!("Version mismatch!\n Program and manifest version must be the same");
@@ -108,151 +110,111 @@ impl Manifest {
         deserialized_manifest
     }
 
-    pub fn activate(&self, prefix: &str) {
-        for file in self.files.iter() {
-            if [
-                FileKind::Symlink,
-                FileKind::File,
-                FileKind::RecursiveSymlink,
-            ]
-            .contains(&file.kind)
-            {
-                if file.source.is_none() {
-                    eprintln!(
-                        "File '{}', of type {:?} missing source attribute",
-                        file.target.display(),
-                        file.kind,
-                    );
-                    continue;
-                }
+    pub fn activate(&mut self, prefix: &str) {
+        self.files.sort_by_key(|f| f.kind);
 
-                if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
-                    eprintln!(
-                        "File source '{}', does not exist",
-                        file.source.as_ref().unwrap().display(),
-                    );
-                    continue;
-                }
-            };
-
-            if [FileKind::File, FileKind::Symlink].contains(&file.kind) {
-                match file_util::mkdir(file.target.parent().expect("Failed to get parent")) {
-                    Ok(x) => x,
-                    Err(e) => eprintln!(
-                        "Couldn't create directory '{}'\n Reason: {}",
+        self.files
+            .iter_mut()
+            .filter(|file| !file.missing_source())
+            .for_each(|file| {
+                if let Err(e) = file.set_metadata() {
+                    error!(
+                        "Failed to read file: '{}'\nReason:'{}'",
                         file.target.display(),
                         e
-                    ),
+                    )
                 };
-            };
-            let clobber = file.clobber.unwrap_or(self.clobber_by_default);
 
-            if ![
-                FileKind::Delete,
-                FileKind::Chmod,
-                FileKind::Directory,
-                FileKind::RecursiveSymlink,
-            ]
-            .contains(&file.kind)
-            {
-                if let Err(e) = file_util::delete_or_move(&file.target, prefix, clobber) {
-                    eprintln!(
-                        "Couldn't move/delete conflicting file '{}'\nReason: {}",
+                let clobber = file.clobber.unwrap_or(self.clobber_by_default);
+
+                if file.check().unwrap_or(false) {
+                    info!("File '{}' already correct", file.target.display());
+                    return;
+                }
+
+                if let Err(e) = match file.kind {
+                    FileKind::Directory => file.directory(),
+                    FileKind::RecursiveSymlink => file.recursive_symlink(prefix, clobber),
+                    FileKind::File => file.copy(),
+                    FileKind::Symlink => file.symlink(),
+                    FileKind::Chmod => file.chmod_chown(),
+                    FileKind::Delete => file_util::delete_if_exists(&file.target),
+                } {
+                    error!(
+                        "Failed to handle file: '{}'\nReason: {}",
                         file.target.display(),
                         e
-                    );
+                    )
                 };
-            }
-
-            let activation = match file.kind {
-                FileKind::Directory => match file_util::mkdir(&file.target) {
-                    Err(e) => Err(e),
-                    Ok(_) => file_util::chmod(file),
-                },
-                FileKind::RecursiveSymlink => file_util::recursive_symlink(file, prefix, clobber),
-                FileKind::File => file_util::copy(file),
-                FileKind::Symlink => file_util::symlink(file),
-                FileKind::Chmod => file_util::chmod(file),
-                FileKind::Delete => file_util::delete_if_exists(&file.target),
-            };
-
-            match activation {
-                Ok(x) => x,
-                Err(e) => eprintln!(
-                    "Failed to handle '{}'\nReason: {}",
-                    file.target.display(),
-                    e
-                ),
-            };
-        }
+            })
     }
 
-    pub fn deactivate(&self) {
-        for file in self.files.iter().rev() {
-            if [
-                FileKind::Symlink,
-                FileKind::File,
-                FileKind::RecursiveSymlink,
-            ]
-            .contains(&file.kind)
-            {
-                if file.source.is_none() {
-                    eprintln!(
-                        "File '{}', of type {:?} missing source attribute",
+    pub fn deactivate(&mut self) {
+        self.files.sort_by_key(|f| f.kind);
+
+        self.files
+            .iter_mut()
+            .filter(|file| !file.missing_source())
+            .rev()
+            .for_each(|file| {
+                if let Err(e) = file.set_metadata() {
+                    info!(
+                        "Failed to get file metadata '{}'\nReason: {}",
                         file.target.display(),
-                        file.kind
+                        e
                     );
-                    continue;
+                    return;
                 }
 
-                if fs::symlink_metadata(file.source.as_ref().unwrap()).is_err() {
-                    println!(
-                        "File '{}' already deleted",
-                        file.source.as_ref().unwrap().display()
-                    );
-                    continue;
+                if file.metadata.is_none() {
+                    info!("File already deleted '{}'", file.target.display());
+                    return;
                 }
-            };
 
-            if let Err(e) = match file.kind {
-                // delete and chmod are a no-op on deactivation
-                FileKind::Delete => continue,
-                FileKind::Chmod => continue,
-                // delete only if directory is empty
-                FileKind::Directory => file_util::rmdir(&file.target),
-                // this has it's own error handling
-                FileKind::RecursiveSymlink => {
-                    file_util::recursive_cleanup(file);
-                    Ok(())
+                //TODO:
+                //possibly
+                /*
+                if !file.check {
+                   return
                 }
-                // delete only if types match
-                FileKind::Symlink => file_util::type_checked_delete(file),
-                // delete only if types match
-                FileKind::File => file_util::type_checked_delete(file),
-            } {
-                eprintln!(
-                    "Didn't cleanup file '{}'\nReason: {}",
-                    file.target.display(),
-                    e
-                )
-            };
-        }
+                */
+
+                if let Err(e) = match file.kind {
+                    // no-op on deactivation
+                    FileKind::Delete | FileKind::Chmod => return,
+                    // delete only if directory is empty
+                    FileKind::Directory => file_util::rmdir(&file.target),
+                    // this has it's own error handling
+                    FileKind::RecursiveSymlink => {
+                        file.recursive_cleanup();
+                        Ok(())
+                    }
+                    // delete only if types match
+                    FileKind::Symlink | FileKind::File => file.type_check_delete(),
+                } {
+                    error!(
+                        "Didn't cleanup file: '{}'\nReason: {}",
+                        file.target.display(),
+                        e
+                    )
+                };
+            });
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {
-        let mut intersection: BTreeSet<File> = BTreeSet::new();
+        let mut intersection: Vec<File> = vec![];
 
         old_manifest.files.retain(|f| {
-            let contains = self.files.remove(f);
+            let contains = self.files.contains(f);
             if contains {
-                intersection.insert(f.clone());
+                intersection.push(f.clone());
             }
             !contains
         });
 
+        self.files.retain(|f| !old_manifest.files.contains(f));
+
         old_manifest.deactivate();
         self.activate(prefix);
-
-        //TODO: Verify same files
     }
 }

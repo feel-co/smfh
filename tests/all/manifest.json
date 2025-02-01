@@ -1,0 +1,26 @@
+{
+  "files": [
+    {
+      "type": "symlink",
+      "source": "./sources/file",
+      "target": "./outputs/link"
+    },
+    {
+      "type": "file",
+      "source": "./sources/file",
+      "target": "./outputs/file"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/directory"
+    },
+    {
+      "type": "recursiveSymlink",
+      "source": "./sources/recursiveSymlink",
+      "target": "./outputs/recursiveSymlink"
+    }
+
+  ],
+  "clobber_by_default": false,
+  "version": 1
+}
