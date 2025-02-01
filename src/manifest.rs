@@ -68,7 +68,7 @@ pub enum FileKind {
     RecursiveSymlink,
     File,
     Symlink,
-    Chmod,
+    Modify,
     Delete,
 }
 
@@ -80,7 +80,7 @@ impl Ord for FileKind {
                 FileKind::RecursiveSymlink => 2,
                 FileKind::File => 3,
                 FileKind::Symlink => 4,
-                FileKind::Chmod => 5,
+                FileKind::Modify => 5,
                 FileKind::Delete => 7,
             }
         }
@@ -137,7 +137,7 @@ impl Manifest {
                     FileKind::RecursiveSymlink => file.recursive_symlink(prefix, clobber),
                     FileKind::File => file.copy(),
                     FileKind::Symlink => file.symlink(),
-                    FileKind::Chmod => file.chmod_chown(),
+                    FileKind::Modify => file.chmod_chown(),
                     FileKind::Delete => file_util::delete_if_exists(&file.target),
                 } {
                     error!(
@@ -181,7 +181,7 @@ impl Manifest {
 
                 if let Err(e) = match file.kind {
                     // no-op on deactivation
-                    FileKind::Delete | FileKind::Chmod => return,
+                    FileKind::Delete | FileKind::Modify => return,
                     // delete only if directory is empty
                     FileKind::Directory => file_util::rmdir(&file.target),
                     // this has it's own error handling

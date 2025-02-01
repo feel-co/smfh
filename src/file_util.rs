@@ -47,7 +47,7 @@ impl File {
             }
         };
 
-        if self.kind != FileKind::Chmod {
+        if self.kind != FileKind::Modify {
             if self.kind == FileKind::Symlink {
                 if !metadata.is_symlink() {
                     return Ok(false);
