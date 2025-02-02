@@ -18,8 +18,22 @@
       "type": "recursiveSymlink",
       "source": "./sources/recursiveSymlink",
       "target": "./outputs/recursiveSymlink"
+    },
+    {
+      "type": "file",
+      "source": "./sources/file",
+      "target": "./outputs/modified",
+      "permissions": "700"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/modified_directory",
+      "permissions": "700"
+    },
+    {
+      "type": "delete",
+      "target": "./outputs/delete"
     }
-
   ],
   "clobber_by_default": false,
   "version": 1

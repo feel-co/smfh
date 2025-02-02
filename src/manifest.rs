@@ -1,6 +1,3 @@
-use crate::file_util::{
-    self,
-};
 use derivative::Derivative;
 use log::{
     error,
@@ -113,92 +110,29 @@ impl Manifest {
     pub fn activate(&mut self, prefix: &str) {
         self.files.sort_by_key(|f| f.kind);
 
-        self.files
-            .iter_mut()
-            .filter(|file| !file.missing_source())
-            .for_each(|file| {
-                if let Err(e) = file.set_metadata() {
-                    error!(
-                        "Failed to read file: '{}'\nReason:'{}'",
-                        file.target.display(),
-                        e
-                    )
-                };
-
-                let clobber = file.clobber.unwrap_or(self.clobber_by_default);
-
-                if file.check().unwrap_or(false) {
-                    info!("File '{}' already correct", file.target.display());
-                    return;
-                }
-
-                if let Err(e) = match file.kind {
-                    FileKind::Directory => file.directory(),
-                    FileKind::RecursiveSymlink => file.recursive_symlink(prefix, clobber),
-                    FileKind::File => file.copy(),
-                    FileKind::Symlink => file.symlink(),
-                    FileKind::Modify => file.chmod_chown(),
-                    FileKind::Delete => file_util::delete_if_exists(&file.target),
-                } {
-                    error!(
-                        "Failed to handle file: '{}'\nReason: {}",
-                        file.target.display(),
-                        e
-                    )
-                };
-            })
+        self.files.iter_mut().for_each(|file| {
+            if let Err(e) = file.activate(self.clobber_by_default, prefix) {
+                error!(
+                    "Failed to activate file: '{}'\n Reason: '{}'",
+                    file.target.display(),
+                    e
+                );
+            }
+        })
     }
 
     pub fn deactivate(&mut self) {
         self.files.sort_by_key(|f| f.kind);
 
-        self.files
-            .iter_mut()
-            .filter(|file| !file.missing_source())
-            .rev()
-            .for_each(|file| {
-                if let Err(e) = file.set_metadata() {
-                    info!(
-                        "Failed to get file metadata '{}'\nReason: {}",
-                        file.target.display(),
-                        e
-                    );
-                    return;
-                }
-
-                if file.metadata.is_none() {
-                    info!("File already deleted '{}'", file.target.display());
-                    return;
-                }
-
-                //TODO:
-                //possibly
-                /*
-                if !file.check {
-                   return
-                }
-                */
-
-                if let Err(e) = match file.kind {
-                    // no-op on deactivation
-                    FileKind::Delete | FileKind::Modify => return,
-                    // delete only if directory is empty
-                    FileKind::Directory => file_util::rmdir(&file.target),
-                    // this has it's own error handling
-                    FileKind::RecursiveSymlink => {
-                        file.recursive_cleanup();
-                        Ok(())
-                    }
-                    // delete only if types match
-                    FileKind::Symlink | FileKind::File => file.type_check_delete(),
-                } {
-                    error!(
-                        "Didn't cleanup file: '{}'\nReason: {}",
-                        file.target.display(),
-                        e
-                    )
-                };
-            });
+        self.files.iter_mut().rev().for_each(|file| {
+            if let Err(e) = file.deactivate() {
+                error!(
+                    "Failed to deactivate file: '{}'\n Reason: '{}'",
+                    file.target.display(),
+                    e
+                );
+            }
+        });
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {

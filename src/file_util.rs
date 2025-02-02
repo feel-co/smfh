@@ -19,11 +19,13 @@ use jwalk::{
 use log::{
     error,
     info,
+    warn,
 };
 use std::{
     ffi::OsString,
     fs::{
         self,
+        Metadata,
     },
     io::Read,
     os::unix::fs::{
@@ -38,46 +40,85 @@ use std::{
 };
 
 impl File {
+    pub fn activate(&mut self, clobber_by_default: bool, prefix: &str) -> Result<()> {
+        if self.missing_source() {
+            return Ok(());
+        }
+
+        self.set_metadata()?;
+
+        let clobber = self.clobber.unwrap_or(clobber_by_default);
+
+        if self.kind != FileKind::RecursiveSymlink {
+            if self.check().unwrap_or(false) {
+                info!("File '{}' already correct", self.target.display());
+                return Ok(());
+            }
+
+            if self.metadata.is_some() && [FileKind::Modify, FileKind::Delete].contains(&self.kind)
+            {
+                if !clobber {
+                    prefix_move(&self.target, prefix)?;
+                } else {
+                    delete(&self.target, self.metadata.as_ref().unwrap())?;
+                }
+            }
+        };
+
+        match self.kind {
+            FileKind::Directory => self.directory(),
+            FileKind::RecursiveSymlink => self.recursive_symlink(prefix, clobber),
+            FileKind::File => self.copy(),
+            FileKind::Symlink => self.symlink(),
+            FileKind::Modify => self.chmod_chown(),
+            FileKind::Delete => delete(&self.target, self.metadata.as_ref().unwrap()),
+        }
+    }
+    pub fn deactivate(&mut self) -> Result<()> {
+        self.set_metadata()?;
+
+        if self.metadata.is_none() {
+            info!("File already deleted '{}'", self.target.display());
+            return Ok(());
+        }
+
+        if self.kind != FileKind::RecursiveSymlink && !self.check()? {
+            return Err(eyre!("File is not the same as expected"));
+        };
+
+        match self.kind {
+            // no-op on deactivation
+            FileKind::Delete | FileKind::Modify => Ok(()),
+            // delete only if directory is empty
+            FileKind::Directory => rmdir(&self.target),
+            // this has it's own error handling
+            FileKind::RecursiveSymlink => {
+                self.recursive_cleanup();
+                Ok(())
+            }
+            // delete only if types match
+            FileKind::Symlink | FileKind::File => {
+                delete(&self.target, self.metadata.as_ref().unwrap())
+            }
+        }
+    }
+
     pub fn check(&self) -> Result<bool> {
-        let Some(metadata) = self.metadata.as_ref() else {
-            if self.kind == FileKind::Delete {
-                return Ok(true);
-            } else {
+        let metadata = match self.metadata.as_ref() {
+            Some(x) => {
+                if self.kind == FileKind::Delete {
+                    return Ok(false);
+                };
+                x
+            }
+            None => {
+                if self.kind == FileKind::Delete {
+                    return Ok(true);
+                }
                 return Ok(false);
             }
         };
 
-        if self.kind != FileKind::Modify {
-            if self.kind == FileKind::Symlink {
-                if !metadata.is_symlink() {
-                    return Ok(false);
-                };
-
-                if fs::canonicalize(&self.target)?
-                    != fs::canonicalize(self.source.as_ref().unwrap())?
-                {
-                    return Ok(false);
-                };
-            } else if self.kind == FileKind::File {
-                if !metadata.is_file() {
-                    return Ok(false);
-                };
-
-                let Ok(target_hash) = hash_file(&self.target) else {
-                    return Err(eyre!("Failed to hash target"));
-                };
-                let Ok(source_hash) = hash_file(self.source.as_ref().unwrap()) else {
-                    return Err(eyre!("Failed to hash source"));
-                };
-                if target_hash != source_hash {
-                    return Ok(false);
-                }
-            } else if [FileKind::Directory, FileKind::RecursiveSymlink].contains(&self.kind)
-                && !metadata.is_dir()
-            {
-                return Ok(false);
-            };
-        };
         if self
             .permissions
             .is_some_and(|x| (metadata.mode() & 0o777) != x)
@@ -91,10 +132,55 @@ impl File {
             return Ok(false);
         }
 
-        //TODO: actually check here
-        if self.kind == FileKind::RecursiveSymlink {
-            return Ok(false);
-        }
+        match self.kind {
+            FileKind::Symlink => {
+                if !metadata.is_symlink() {
+                    return Ok(false);
+                };
+
+                if fs::canonicalize(&self.target)?
+                    != fs::canonicalize(self.source.as_ref().unwrap())?
+                {
+                    return Ok(false);
+                };
+            }
+            FileKind::File => {
+                if !metadata.is_file() {
+                    return Ok(false);
+                };
+
+                let target_hash = match hash_file(&self.target) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        return Err(eyre!(
+                            "Failed to hash file: '{}'\nReason: '{}'",
+                            self.target.display(),
+                            e
+                        ));
+                    }
+                };
+                let source_hash = match hash_file(self.source.as_ref().unwrap()) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        return Err(eyre!(
+                            "Failed to hash file: '{}'\nReason: '{}'",
+                            self.source.as_ref().unwrap().display(),
+                            e
+                        ));
+                    }
+                };
+
+                if target_hash != source_hash {
+                    return Ok(false);
+                }
+            }
+            FileKind::Directory => {
+                if !metadata.is_dir() {
+                    return Ok(false);
+                }
+            }
+            _ => {}
+        };
 
         Ok(true)
     }
@@ -111,13 +197,17 @@ impl File {
         Ok(())
     }
     pub fn missing_source(&self) -> bool {
-        [
+        let res = [
             FileKind::Symlink,
             FileKind::File,
             FileKind::RecursiveSymlink,
         ]
         .contains(&self.kind)
-            && self.source.is_none()
+            && self.source.is_none();
+        if res {
+            warn!("File '{}' missing source", self.target.display())
+        }
+        res
     }
 
     pub fn chmod_chown(&mut self) -> Result<()> {
@@ -132,13 +222,13 @@ impl File {
         if let Some(x) = self.permissions {
             let new_perms = fs::Permissions::from_mode(x);
 
-            if dbg!(metadata.mode() & 0o777) == dbg!(new_perms.mode()) {
+            if metadata.mode() & 0o777 == new_perms.mode() {
                 return Ok(());
             };
             info!(
-                "Setting permissions of: '{:o}' to: '{}'",
-                new_perms.mode(),
+                "Setting permissions of: '{}' to: '{:o}'",
                 &self.target.display(),
+                new_perms.mode(),
             );
 
             fs::set_permissions(&self.target, new_perms)?
@@ -213,30 +303,56 @@ impl File {
         Ok(())
     }
 
-    pub fn type_check_delete(&self) -> Result<()> {
-        let metadata = self.metadata.as_ref().unwrap();
-
-        if metadata.is_symlink() && self.kind == FileKind::Symlink {
-            if fs::canonicalize(&self.target)? == fs::canonicalize(self.source.as_ref().unwrap())? {
-                fs::remove_file(&self.target)?;
-            };
-        } else if metadata.is_file() && self.kind == FileKind::File {
-            let Ok(target_hash) = hash_file(&self.target) else {
-                return Err(eyre!("Failed to hash target"));
-            };
-            let Ok(source_hash) = hash_file(self.source.as_ref().unwrap()) else {
-                return Err(eyre!("Failed to hash source"));
-            };
-            if target_hash == source_hash {
-                fs::remove_file(&self.target)?;
-            }
-        } else {
-            return Err(eyre!("File is not symlink, directory, or file"));
-        };
-        Ok(())
-    }
-
     pub fn recursive_symlink(&self, prefix: &str, clobber: bool) -> Result<()> {
+        pub fn handle_entry(
+            file: &File,
+            entry: &DirEntry<((), ())>,
+            base_path: &Path,
+            clobber: bool,
+            prefix: &str,
+        ) -> Result<()> {
+            let target_file = &file.target.join(entry.path().strip_prefix(base_path)?);
+            let metadata = fs::symlink_metadata(target_file);
+
+            match metadata {
+                Ok(x) => {
+                    if entry.file_type().is_dir() && x.is_dir() {
+                        return Ok(());
+                    };
+
+                    if fs::canonicalize(target_file)? == fs::canonicalize(entry.path())? {
+                        return Ok(());
+                    };
+
+                    if clobber {
+                        delete(target_file, &x)?;
+                    } else {
+                        prefix_move(target_file, prefix)?;
+                    };
+                }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(eyre!("{}", e));
+                    };
+                }
+            };
+
+            if entry.file_type().is_dir() {
+                mkdir(target_file)?;
+                return Ok(());
+            };
+
+            unixFs::symlink(fs::canonicalize(entry.path())?, target_file)?;
+
+            info!(
+                "Symlinked '{}' -> '{}'",
+                entry.path().display(),
+                target_file.display(),
+            );
+
+            Ok(())
+        }
+
         let base_path = self.source.as_ref().unwrap();
         let walkdir = WalkDir::new(base_path)
             .follow_links(true)
@@ -254,21 +370,13 @@ impl File {
             });
 
         for entry in walkdir {
-            let target_file = &self.target.join(entry.path().strip_prefix(base_path)?);
-
-            if entry.file_type().is_dir() {
-                mkdir(target_file)?;
-                continue;
-            }
-
-            delete_or_move(target_file, prefix, clobber)?;
-            unixFs::symlink(fs::canonicalize(entry.path())?, target_file)?;
-
-            info!(
-                "Symlinked '{}' -> '{}'",
-                entry.path().display(),
-                target_file.display(),
-            );
+            if let Err(e) = handle_entry(self, &entry, base_path, clobber, prefix) {
+                error!(
+                    "Failed to create file '{}'\nReason: {}",
+                    entry.path().display(),
+                    e
+                )
+            };
         }
         Ok(())
     }
@@ -280,29 +388,32 @@ impl File {
             base_path: &Path,
             dirs: &mut Vec<(PathBuf, usize)>,
         ) -> Result<()> {
-            let path = entry.path();
-            let target_file = file.target.join(path.strip_prefix(base_path)?);
+            let target_file = &file.target.join(entry.path().strip_prefix(base_path)?);
 
-            let metadata = fs::symlink_metadata(&target_file)?;
-
-            if metadata.is_symlink() && entry.file_type().is_file() {
-                if fs::canonicalize(&target_file)? == fs::canonicalize(entry.path())? {
-                    fs::remove_file(&target_file)?;
-                };
-            } else if metadata.is_file() {
-                info!(
-                    "Ignoring file in recursiveSymlink directory: '{}'",
-                    &target_file.display()
-                )
-            } else if metadata.is_dir() && entry.file_type().is_dir() {
-                dirs.push((target_file.clone(), entry.depth()));
-                // Don't log on directories
-                // they'll be listed on the rmdir call
-                return Ok(());
-            } else {
-                return Err(eyre!("File is not symlink, directory, or file"));
+            let metadata = match fs::symlink_metadata(target_file) {
+                Ok(x) => x,
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        return Err(eyre!("Error on file '{}', {}", target_file.display(), e));
+                    };
+                    return Ok(());
+                }
             };
 
+            if metadata.is_symlink() {
+                if fs::canonicalize(target_file)? == fs::canonicalize(entry.path())? {
+                    fs::remove_file(target_file)?;
+                };
+            } else if metadata.is_dir() && entry.file_type().is_dir() {
+                dirs.push((target_file.clone(), entry.depth()));
+                return Ok(());
+            } else {
+                info!(
+                    "Ignoring file: '{}', in recursiveSymlink directory: '{}'",
+                    &target_file.display(),
+                    base_path.display()
+                )
+            }
             info!(
                 "Deleting '{}' -> '{}'",
                 entry.path().display(),
@@ -352,19 +463,6 @@ impl File {
     }
 }
 
-pub fn delete_if_exists(path: &Path) -> Result<()> {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return Ok(());
-    };
-    if metadata.is_file() || metadata.is_symlink() {
-        fs::remove_file(path)?;
-        info!("Deleted '{}'", path.display());
-    } else {
-        fs::remove_dir_all(path)?;
-    }
-    Ok(())
-}
-
 pub fn mkdir(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(_) => {
@@ -401,14 +499,6 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_or_move(path: &Path, prefix: &str, clobber: bool) -> Result<()> {
-    match clobber {
-        true => delete_if_exists(path)?,
-        false => prefix_move(path, prefix)?,
-    }
-    Ok(())
-}
-
 pub fn rmdir(path: &Path) -> Result<()> {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return Ok(());
@@ -421,11 +511,20 @@ pub fn rmdir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-// TODO: specify where error that come from here come from
 pub fn hash_file(filepath: &Path) -> Result<u64> {
     let mut file = std::fs::File::open(filepath)?;
     let mut buffer = Vec::new();
     buffer.clear();
     file.read_to_end(&mut buffer)?;
     Ok(xxhash_rust::xxh3::xxh3_64(&buffer))
+}
+
+pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
+    if metadata.is_dir() {
+        fs::remove_dir_all(filepath)?;
+    } else {
+        fs::remove_file(filepath)?;
+    }
+    info!("Deleted '{}'", filepath.display());
+    Ok(())
 }

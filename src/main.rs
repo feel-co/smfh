@@ -26,18 +26,18 @@ fn main() -> Result<()> {
     color_eyre::install().expect("Failed to setup color_eyre");
     //TODO: implement clap args for logging options
     CombinedLogger::init(vec![
-//        TermLogger::new(
-//            LevelFilter::Warn,
-//            Config::default(),
-//            TerminalMode::Mixed,
-//            ColorChoice::Auto,
-//        ),
-//        TermLogger::new(
-//            LevelFilter::Info,
-//            Config::default(),
-//            TerminalMode::Mixed,
-//            ColorChoice::Auto,
-//        ),
+        //        TermLogger::new(
+        //            LevelFilter::Warn,
+        //            Config::default(),
+        //            TerminalMode::Mixed,
+        //            ColorChoice::Auto,
+        //        ),
+        //        TermLogger::new(
+        //            LevelFilter::Info,
+        //            Config::default(),
+        //            TerminalMode::Mixed,
+        //            ColorChoice::Auto,
+        //        ),
         TermLogger::new(
             LevelFilter::Debug,
             Config::default(),
@@ -47,20 +47,13 @@ fn main() -> Result<()> {
     ])?;
 
     match args.sub_command {
-        Subcommands::Deactivate { manifest } => {
-            Manifest::read(&manifest).deactivate();
-        }
-        Subcommands::Activate { manifest, prefix } => {
-            Manifest::read(&manifest).activate(&prefix);
-        }
+        Subcommands::Deactivate { manifest } => Manifest::read(&manifest).deactivate(),
+        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest).activate(&prefix),
         Subcommands::Diff {
             prefix,
             manifest,
             old_manifest,
-        } => {
-            let old_manifest = Manifest::read(&old_manifest);
-            Manifest::read(&manifest).diff(old_manifest, &prefix);
-        }
+        } => Manifest::read(&manifest).diff(Manifest::read(&old_manifest), &prefix),
     };
     Ok(())
 }
