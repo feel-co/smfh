@@ -55,7 +55,7 @@ impl File {
                 return Ok(());
             }
 
-            if self.metadata.is_some() && [FileKind::Modify, FileKind::Delete].contains(&self.kind)
+            if self.metadata.is_some() && ![FileKind::Modify, FileKind::Delete].contains(&self.kind)
             {
                 if !clobber {
                     prefix_move(&self.target, prefix)?;
@@ -119,12 +119,13 @@ impl File {
             }
         };
 
-        if self
-            .permissions
-            .is_some_and(|x| (metadata.mode() & 0o777) != x)
+        if self.kind != FileKind::Symlink
+            && self
+                .permissions
+                .is_some_and(|x| (metadata.mode() & 0o777) != x)
         {
             return Ok(false);
-        };
+        }
 
         if self.uid.is_some_and(|x| x != metadata.uid())
             || self.gid.is_some_and(|x| x != metadata.gid())
@@ -219,21 +220,24 @@ impl File {
             ));
         };
 
-        if let Some(x) = self.permissions {
-            let new_perms = fs::Permissions::from_mode(x);
+        if self.kind != FileKind::Symlink {
+            if let Some(x) = self.permissions {
+                let new_perms = fs::Permissions::from_mode(x);
 
-            if metadata.mode() & 0o777 == new_perms.mode() {
-                return Ok(());
-            };
-            info!(
-                "Setting permissions of: '{}' to: '{:o}'",
-                &self.target.display(),
-                new_perms.mode(),
-            );
+                if metadata.mode() & 0o777 == new_perms.mode() {
+                    return Ok(());
+                };
+                info!(
+                    "Setting permissions of: '{}' to: '{:o}'",
+                    &self.target.display(),
+                    new_perms.mode(),
+                );
 
-            fs::set_permissions(&self.target, new_perms)?
+                //This doesn't work with symlinks
+                fs::set_permissions(&self.target, new_perms)?
+            }
+            self.set_metadata()?;
         }
-        self.set_metadata()?;
 
         if self.uid.is_some() || self.uid.is_some() {
             if (self.uid.is_some_and(|x| x == metadata.uid()))
@@ -481,6 +485,7 @@ pub fn mkdir(path: &Path) -> Result<()> {
 }
 
 pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
+    //TODO this is wrong (at least with relative paths)
     let Ok(_) = fs::symlink_metadata(path) else {
         return Ok(());
     };

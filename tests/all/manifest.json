@@ -11,8 +11,23 @@
       "target": "./outputs/file"
     },
     {
+      "type": "file",
+      "source": "./sources/file",
+      "target": "./outputs/file_which_has_been_modified"
+    },
+    {
       "type": "directory",
       "target": "./outputs/directory"
+    },
+    {
+      "type": "file",
+      "source": "./sources/file",
+      "target": "./outputs/directory/file_in_dir"
+    },
+    {
+      "type": "symlink",
+      "source": "./sources/file",
+      "target": "./outputs/directory/symlink_in_dir"
     },
     {
       "type": "recursiveSymlink",
@@ -20,15 +35,26 @@
       "target": "./outputs/recursiveSymlink"
     },
     {
+      "type": "modify",
+      "target": "./outputs/modified",
+      "permissions": "770"
+    },
+    {
       "type": "file",
       "source": "./sources/file",
-      "target": "./outputs/modified",
+      "target": "./outputs/modified_file",
       "permissions": "700"
     },
     {
       "type": "directory",
       "target": "./outputs/modified_directory",
       "permissions": "700"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/not_dir",
+      "permissions": "700",
+      "clobber": true
     },
     {
       "type": "delete",
