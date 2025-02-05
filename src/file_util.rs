@@ -485,21 +485,28 @@ pub fn mkdir(path: &Path) -> Result<()> {
 }
 
 pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
-    //TODO this is wrong (at least with relative paths)
     let Ok(_) = fs::symlink_metadata(path) else {
         return Ok(());
     };
 
-    let mut appended_path = OsString::from(prefix);
-    appended_path.push(path.file_name().ok_or_eyre(eyre!("test"))?);
+    let canon_path = fs::canonicalize(path)?;
 
-    let new_path = PathBuf::from(appended_path);
+    let mut appended_path = OsString::from(prefix);
+    appended_path.push(canon_path.file_name().ok_or_eyre(format!(
+        "Failed to get file name of file '{}'",
+        path.display()
+    ))?);
+
+    let new_path = canon_path
+        .parent()
+        .ok_or_eyre(format!("Failed to get parent of file '{}'", path.display()))?
+        .join(PathBuf::from(appended_path));
 
     if fs::symlink_metadata(&new_path).is_ok() {
         prefix_move(&new_path, prefix)?
     };
 
-    fs::rename(path, &new_path)?;
+    fs::rename(canon_path, &new_path)?;
     info!("Renaming '{}' -> '{}'", path.display(), new_path.display());
     Ok(())
 }
