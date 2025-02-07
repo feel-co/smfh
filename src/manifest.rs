@@ -30,13 +30,24 @@ pub struct Manifest {
 }
 
 fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
-    if let Some(str) = Option::<String>::deserialize(deserializer)? {
-        match u32::from_str_radix(&str, 8) {
-            Ok(x) => Ok(Some(x)),
-            Err(e) => Err(serde::de::Error::custom(e)),
+    let errmsg =
+        "Failed to deserialize permissions attribute of file\n File permissions will not be set!";
+    let Ok(deserialized) = Option::<String>::deserialize(deserializer) else {
+        error!("{}", errmsg);
+        return Ok(None);
+    };
+    let Some(opt) = deserialized else {
+        // No message here because it's null!
+        return Ok(None);
+    };
+
+    match u32::from_str_radix(&opt, 8) {
+        Ok(x) => Ok(Some(x)),
+        Err(_) => {
+            println!("THREE");
+            error!("{}", errmsg);
+            Ok(None)
         }
-    } else {
-        Ok(None)
     }
 }
 
@@ -48,7 +59,7 @@ pub struct File {
     #[serde(rename = "type")]
     pub kind: FileKind,
     pub clobber: Option<bool>,
-    #[serde(deserialize_with = "deserialize_octal")]
+    #[serde(default, deserialize_with = "deserialize_octal")]
     pub permissions: Option<u32>,
     pub uid: Option<u32>,
     pub gid: Option<u32>,
