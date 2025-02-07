@@ -75,6 +75,10 @@ impl File {
         }
     }
     pub fn deactivate(&mut self) -> Result<()> {
+        if !self.deactivate.unwrap_or(true) {
+            return Ok(());
+        }
+
         self.set_metadata()?;
 
         if self.metadata.is_none() {
@@ -84,7 +88,7 @@ impl File {
 
         if self.kind != FileKind::RecursiveSymlink && !self.check()? {
             return Err(eyre!("File is not the same as expected"));
-        };
+        }
 
         match self.kind {
             // no-op on deactivation

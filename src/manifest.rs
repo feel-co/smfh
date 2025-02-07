@@ -48,10 +48,11 @@ pub struct File {
     #[serde(rename = "type")]
     pub kind: FileKind,
     pub clobber: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_octal")]
+    #[serde(deserialize_with = "deserialize_octal")]
     pub permissions: Option<u32>,
     pub uid: Option<u32>,
     pub gid: Option<u32>,
+    pub deactivate: Option<bool>,
 
     #[serde(skip)]
     #[derivative(PartialEq = "ignore")]
