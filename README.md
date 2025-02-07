@@ -89,6 +89,6 @@ drwxr-xr-x ├── directory
 .rw-r--r-- ├── modified
 drwxr-xr-x ├── recursiveSymlink
 drwxr-xr-x │   ├── dir
-lrwxrwxrwx │   └── symlink -> /home/gerg/Projects/smfh/tests/all/sources/file
-lrwxrwxrwx └── symlink -> /home/gerg/Projects/smfh/tests/all/sources/file
+lrwxrwxrwx │   └── symlink -> /absolute/path/sources/file
+lrwxrwxrwx └── symlink -> /absolute/path/sources/file
 ```
