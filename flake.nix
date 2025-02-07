@@ -56,8 +56,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          linker = pkgs.callPackage ./package.nix { };
-          default = self.packages.${system}.linker;
+          smfh = pkgs.callPackage ./package.nix { };
+          default = self.packages.${system}.smfh;
         }
       );
       devShells = eachSystem (

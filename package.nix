@@ -8,5 +8,5 @@ rustPlatform.buildRustPackage {
   src = ./.;
   cargoLock.lockFile = ./Cargo.lock;
 
-  meta.mainProgram = "linker";
+  meta.mainProgram = "smfh";
 }
