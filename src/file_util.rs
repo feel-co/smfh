@@ -70,7 +70,7 @@ impl File {
             FileKind::RecursiveSymlink => {
                 self.recursive_symlink(prefix, clobber);
                 Ok(())
-            },
+            }
             FileKind::File => self.copy(),
             FileKind::Symlink => self.symlink(),
             FileKind::Modify => self.chmod_chown(),
@@ -114,83 +114,78 @@ impl File {
     }
 
     pub fn check(&self) -> Result<bool> {
-        let metadata = if let Some(x) = self.metadata.as_ref() {
-            if self.kind == FileKind::Delete {
-                return Ok(false);
-            };
-            x
-        } else {
-            if self.kind == FileKind::Delete {
-                return Ok(true);
-            }
-            return Ok(false);
-        };
+        let hash_error =
+            |e, path: &PathBuf| eyre!("Failed to hash file: '{}'\nReason: '{}'", path.display(), e);
 
-        if self.kind != FileKind::Symlink
-            && self
-                .permissions
-                .is_some_and(|x| (metadata.mode() & 0o777) != x)
-        {
-            return Ok(false);
+        match *self {
+            File {
+                metadata: None,
+                kind,
+                ..
+            } => Ok(kind == FileKind::Delete),
+            File {
+                metadata: Some(_),
+                kind: FileKind::Delete,
+                ..
+            } => Ok(false),
+            File {
+                kind: FileKind::File | FileKind::Directory | FileKind::Modify,
+                permissions: Some(perms),
+                metadata: Some(ref metadata),
+                ..
+            } if perms != (metadata.mode() & 0o777) => Ok(false),
+            File {
+                uid: Some(uid),
+                metadata: Some(ref metadata),
+                ..
+            } if uid != metadata.uid() => Ok(false),
+            File {
+                gid: Some(gid),
+                metadata: Some(ref metadata),
+                ..
+            } if gid != metadata.gid() => Ok(false),
+            File {
+                kind: FileKind::Symlink,
+                metadata: Some(ref metadata),
+                ..
+            } if !metadata.is_symlink() => Ok(false),
+            File {
+                kind: FileKind::Symlink,
+                ref target,
+                source: Some(ref source),
+                ..
+            } => Ok(fs::canonicalize(target)? == fs::canonicalize(source)?),
+            File {
+                kind: FileKind::Directory,
+                metadata: Some(ref metadata),
+                ..
+            } => Ok(metadata.is_dir()),
+            File {
+                kind: FileKind::File,
+                metadata: Some(ref metadata),
+                ..
+            } if !metadata.is_file() => Ok(false),
+            File {
+                kind: FileKind::File,
+                ref target,
+                source: Some(ref source),
+                ..
+            } => {
+                let target_hash = hash_file(target).map_err(|e| hash_error(e, target))?;
+                let source_hash = hash_file(source).map_err(|e| hash_error(e, source))?;
+                Ok(target_hash == source_hash)
+            }
+            File {
+                source: None,
+                kind: FileKind::Symlink | FileKind::File | FileKind::RecursiveSymlink,
+                ref target,
+                ..
+            } => Err(eyre!("File '{}' missing_source", target.display())),
+            File {
+                kind: FileKind::RecursiveSymlink | FileKind::Modify,
+                ..
+            } => Ok(true),
         }
-
-        if self.uid.is_some_and(|x| x != metadata.uid())
-            || self.gid.is_some_and(|x| x != metadata.gid())
-        {
-            return Ok(false);
-        }
-
-        match self.kind {
-            FileKind::Symlink => {
-                if !metadata.is_symlink() || self.missing_source() {
-                    return Ok(false);
-                };
-
-                if fs::canonicalize(&self.target)?
-                    != fs::canonicalize(self.source.as_ref().unwrap())?
-                {
-                    return Ok(false);
-                };
-            }
-            FileKind::File => {
-                if !metadata.is_file() || self.missing_source() {
-                    return Ok(false);
-                };
-
-                let target_hash = match hash_file(&self.target) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        return Err(eyre!(
-                            "Failed to hash file: '{}'\nReason: '{}'",
-                            self.target.display(),
-                            e
-                        ));
-                    }
-                };
-                let source_hash = match hash_file(self.source.as_ref().unwrap()) {
-                    Ok(x) => x,
-                    Err(e) => {
-                        return Err(eyre!(
-                            "Failed to hash file: '{}'\nReason: '{}'",
-                            self.source.as_ref().unwrap().display(),
-                            e
-                        ));
-                    }
-                };
-
-                if target_hash != source_hash {
-                    return Ok(false);
-                }
-            }
-            FileKind::Directory => {
-                if !metadata.is_dir() {
-                    return Ok(false);
-                }
-            }
-            _ => {}
-        };
-
-        Ok(true)
     }
 
     pub fn set_metadata(&mut self) -> Result<()> {
