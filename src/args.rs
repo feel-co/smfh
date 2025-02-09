@@ -7,6 +7,10 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(version, about)]
 pub struct Args {
+
+    #[arg(short, long)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub sub_command: Subcommands,
 }

@@ -97,6 +97,9 @@ impl File {
             FileKind::Directory => rmdir(&self.target),
             // this has it's own error handling
             FileKind::RecursiveSymlink => {
+                if self.missing_source() {
+                    return Err(eyre!("Missing source"));
+                }
                 self.recursive_cleanup();
                 Ok(())
             }
@@ -139,7 +142,7 @@ impl File {
 
         match self.kind {
             FileKind::Symlink => {
-                if !metadata.is_symlink() {
+                if !metadata.is_symlink() || self.missing_source() {
                     return Ok(false);
                 };
 
@@ -150,7 +153,7 @@ impl File {
                 };
             }
             FileKind::File => {
-                if !metadata.is_file() {
+                if !metadata.is_file() || self.missing_source() {
                     return Ok(false);
                 };
 

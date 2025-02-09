@@ -1,7 +1,9 @@
+use crate::VERSION;
 use derivative::Derivative;
 use log::{
     error,
     info,
+    warn,
 };
 use serde::{
     Deserialize,
@@ -14,13 +16,12 @@ use std::{
         self,
         Metadata,
     },
+    io::BufReader,
     path::{
         Path,
         PathBuf,
     },
 };
-
-pub const VERSION: u16 = 1;
 
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
@@ -33,7 +34,7 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     let errmsg =
         "Failed to deserialize permissions attribute of file\n File permissions will not be set!";
     let Ok(deserialized) = Option::<String>::deserialize(deserializer) else {
-        error!("{}", errmsg);
+        warn!("{}", errmsg);
         return Ok(None);
     };
     let Some(opt) = deserialized else {
@@ -44,8 +45,7 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     match u32::from_str_radix(&opt, 8) {
         Ok(x) => Ok(Some(x)),
         Err(_) => {
-            println!("THREE");
-            error!("{}", errmsg);
+            warn!("{}", errmsg);
             Ok(None)
         }
     }
@@ -105,15 +105,18 @@ impl PartialOrd for FileKind {
 
 impl Manifest {
     pub fn read(manifest_path: &Path) -> Manifest {
-        let read_manifest = fs::read_to_string(manifest_path).expect("Failed to read manifest");
+        let file = fs::File::open(manifest_path).expect("Failed to read manifest");
+        let mut reader = BufReader::new(file);
         let deserialized_manifest: Manifest =
-            serde_json::from_str(&read_manifest).expect("Failed to read manifest");
+            serde_json::from_reader(&mut reader).expect("Failed to deserialize manifest");
 
         info!("Deserialized manifest: '{}'", manifest_path.display());
-        info!("Manifest version: '{}'", deserialized_manifest.version);
-        info!("Program version: '{}'", VERSION);
 
         if deserialized_manifest.version != VERSION {
+            error!(
+                "Program version: '{}' Manifest version: '{}'",
+                VERSION, deserialized_manifest.version
+            );
             panic!("Version mismatch!\n Program and manifest version must be the same");
         };
         deserialized_manifest
