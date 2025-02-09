@@ -3,7 +3,6 @@ use derivative::Derivative;
 use log::{
     error,
     info,
-    warn,
 };
 use serde::{
     Deserialize,
@@ -31,24 +30,13 @@ pub struct Manifest {
 }
 
 fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
-    let errmsg =
-        "Failed to deserialize permissions attribute of file\n File permissions will not be set!";
-    let Ok(deserialized) = Option::<String>::deserialize(deserializer) else {
-        warn!("{}", errmsg);
+    let deserialized_value = Option::<String>::deserialize(deserializer)?;
+    let Some(value) = deserialized_value else {
+        // Don't error here because it's null!
         return Ok(None);
     };
-    let Some(opt) = deserialized else {
-        // No message here because it's null!
-        return Ok(None);
-    };
-
-    match u32::from_str_radix(&opt, 8) {
-        Ok(x) => Ok(Some(x)),
-        Err(_) => {
-            warn!("{}", errmsg);
-            Ok(None)
-        }
-    }
+    let x = u32::from_str_radix(&value, 8).map_err(serde::de::Error::custom)?;
+    Ok(Some(x))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Derivative)]
@@ -83,7 +71,7 @@ pub enum FileKind {
 
 impl Ord for FileKind {
     fn cmp(&self, other: &Self) -> Ordering {
-        fn value(kind: &FileKind) -> u8 {
+        fn value(kind: FileKind) -> u8 {
             match kind {
                 FileKind::Directory => 1,
                 FileKind::RecursiveSymlink => 2,
@@ -93,7 +81,7 @@ impl Ord for FileKind {
                 FileKind::Delete => 7,
             }
         }
-        value(self).cmp(&value(other))
+        value(*self).cmp(&value(*other))
     }
 }
 
@@ -125,7 +113,7 @@ impl Manifest {
     pub fn activate(&mut self, prefix: &str) {
         self.files.sort_by_key(|f| f.kind);
 
-        self.files.iter_mut().for_each(|file| {
+        for file in &mut self.files {
             if let Err(e) = file.activate(self.clobber_by_default, prefix) {
                 error!(
                     "Failed to activate file: '{}'\n Reason: '{}'",
@@ -133,13 +121,13 @@ impl Manifest {
                     e
                 );
             }
-        })
+        }
     }
 
     pub fn deactivate(&mut self) {
         self.files.sort_by_key(|f| f.kind);
 
-        self.files.iter_mut().rev().for_each(|file| {
+        for file in self.files.iter_mut().rev() {
             if let Err(e) = file.deactivate() {
                 error!(
                     "Failed to deactivate file: '{}'\n Reason: '{}'",
@@ -147,7 +135,7 @@ impl Manifest {
                     e
                 );
             }
-        });
+        }
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {

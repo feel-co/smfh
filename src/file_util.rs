@@ -57,17 +57,20 @@ impl File {
 
             if self.metadata.is_some() && ![FileKind::Modify, FileKind::Delete].contains(&self.kind)
             {
-                if !clobber {
-                    prefix_move(&self.target, prefix)?;
-                } else {
+                if clobber {
                     delete(&self.target, self.metadata.as_ref().unwrap())?;
+                } else {
+                    prefix_move(&self.target, prefix)?;
                 }
             }
         };
 
         match self.kind {
             FileKind::Directory => self.directory(),
-            FileKind::RecursiveSymlink => self.recursive_symlink(prefix, clobber),
+            FileKind::RecursiveSymlink => {
+                self.recursive_symlink(prefix, clobber);
+                Ok(())
+            },
             FileKind::File => self.copy(),
             FileKind::Symlink => self.symlink(),
             FileKind::Modify => self.chmod_chown(),
@@ -111,19 +114,16 @@ impl File {
     }
 
     pub fn check(&self) -> Result<bool> {
-        let metadata = match self.metadata.as_ref() {
-            Some(x) => {
-                if self.kind == FileKind::Delete {
-                    return Ok(false);
-                };
-                x
-            }
-            None => {
-                if self.kind == FileKind::Delete {
-                    return Ok(true);
-                }
+        let metadata = if let Some(x) = self.metadata.as_ref() {
+            if self.kind == FileKind::Delete {
                 return Ok(false);
+            };
+            x
+        } else {
+            if self.kind == FileKind::Delete {
+                return Ok(true);
             }
+            return Ok(false);
         };
 
         if self.kind != FileKind::Symlink
@@ -213,7 +213,7 @@ impl File {
         .contains(&self.kind)
             && self.source.is_none();
         if res {
-            warn!("File '{}' missing source", self.target.display())
+            warn!("File '{}' missing source", self.target.display());
         }
         res
     }
@@ -241,7 +241,7 @@ impl File {
                 );
 
                 //This doesn't work with symlinks
-                fs::set_permissions(&self.target, new_perms)?
+                fs::set_permissions(&self.target, new_perms)?;
             }
             self.set_metadata()?;
         }
@@ -314,7 +314,7 @@ impl File {
         Ok(())
     }
 
-    pub fn recursive_symlink(&self, prefix: &str, clobber: bool) -> Result<()> {
+    pub fn recursive_symlink(&self, prefix: &str, clobber: bool) {
         pub fn handle_entry(
             file: &File,
             entry: &DirEntry<((), ())>,
@@ -360,7 +360,6 @@ impl File {
                 entry.path().display(),
                 target_file.display(),
             );
-
             Ok(())
         }
 
@@ -386,10 +385,9 @@ impl File {
                     "Failed to create file '{}'\nReason: {}",
                     entry.path().display(),
                     e
-                )
+                );
             };
         }
-        Ok(())
     }
 
     pub fn recursive_cleanup(&self) {
@@ -423,7 +421,7 @@ impl File {
                     "Ignoring file: '{}', in recursiveSymlink directory: '{}'",
                     &target_file.display(),
                     base_path.display()
-                )
+                );
             }
             info!(
                 "Deleting '{}' -> '{}'",
@@ -457,20 +455,20 @@ impl File {
                     "Failed to remove file '{}'\nReason: {}",
                     entry.path().display(),
                     e
-                )
+                );
             };
         }
         dirs.sort_by(|a, b| b.1.cmp(&a.1));
-        dirs.into_iter().for_each(|dir| {
+        for dir in dirs {
             if let Err(e) = rmdir(&dir.0) {
                 error!(
                     "Didn't remove directory '{}' of recursiveSymlink '{}'\n Error: {}",
                     dir.0.display(),
                     base_path.display(),
                     e
-                )
+                );
             };
-        });
+        }
     }
 }
 
@@ -478,14 +476,13 @@ pub fn mkdir(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(_) => {
             fs::create_dir_all(path)?;
-            info!("Created directory '{}'", path.display())
+            info!("Created directory '{}'", path.display());
         }
         Ok(x) => {
             if !x.is_dir() {
                 return Err(eyre!("File in way of '{}'", path.display()));
-            } else {
-                info!("Directory '{}' already exists", path.display());
             };
+            info!("Directory '{}' already exists", path.display());
         }
     };
     Ok(())
@@ -510,7 +507,7 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
         .join(PathBuf::from(appended_path));
 
     if fs::symlink_metadata(&new_path).is_ok() {
-        prefix_move(&new_path, prefix)?
+        prefix_move(&new_path, prefix)?;
     };
 
     fs::rename(canon_path, &new_path)?;
