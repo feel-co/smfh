@@ -1,4 +1,11 @@
 use crate::VERSION;
+use color_eyre::{
+    Result,
+    eyre::{
+        Context,
+        eyre,
+    },
+};
 use derivative::Derivative;
 use log::{
     error,
@@ -92,11 +99,10 @@ impl PartialOrd for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path) -> Manifest {
-        let file = fs::File::open(manifest_path).expect("Failed to read manifest");
-        let mut reader = BufReader::new(file);
-        let deserialized_manifest: Manifest =
-            serde_json::from_reader(&mut reader).expect("Failed to deserialize manifest");
+    pub fn read(manifest_path: &Path) -> Result<Manifest> {
+        let file = fs::File::open(manifest_path).wrap_err("Failed to read manifest")?;
+        let deserialized_manifest: Manifest = serde_json::from_reader(BufReader::new(file))
+            .wrap_err("Failed to deserialize manifest")?;
 
         info!("Deserialized manifest: '{}'", manifest_path.display());
 
@@ -105,9 +111,11 @@ impl Manifest {
                 "Program version: '{}' Manifest version: '{}'",
                 VERSION, deserialized_manifest.version
             );
-            panic!("Version mismatch!\n Program and manifest version must be the same");
+            return Err(eyre!(
+                "Version mismatch!\n Program and manifest version must be the same"
+            ));
         };
-        deserialized_manifest
+        Ok(deserialized_manifest)
     }
 
     pub fn activate(&mut self, prefix: &str) {

@@ -1,9 +1,6 @@
 use crate::{
     file_util,
-    manifest::{
-        File,
-        FileKind,
-    },
+    manifest,
 };
 use color_eyre::{
     Result,
@@ -20,6 +17,10 @@ use log::{
     error,
     info,
     warn,
+};
+use manifest::{
+    File,
+    FileKind,
 };
 use std::{
     ffi::OsString,

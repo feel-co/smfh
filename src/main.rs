@@ -1,10 +1,6 @@
-extern crate log;
-extern crate simplelog;
-
 mod args;
 mod file_util;
 mod manifest;
-
 use args::{
     Args,
     Subcommands,
@@ -43,13 +39,13 @@ fn main() -> Result<()> {
 
     info!("Program version: '{}'", VERSION);
     match args.sub_command {
-        Subcommands::Deactivate { manifest } => Manifest::read(&manifest).deactivate(),
-        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest).activate(&prefix),
+        Subcommands::Deactivate { manifest } => Manifest::read(&manifest)?.deactivate(),
+        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest)?.activate(&prefix),
         Subcommands::Diff {
             prefix,
             manifest,
             old_manifest,
-        } => Manifest::read(&manifest).diff(Manifest::read(&old_manifest), &prefix),
+        } => Manifest::read(&manifest)?.diff(Manifest::read(&old_manifest)?, &prefix),
     };
     Ok(())
 }
