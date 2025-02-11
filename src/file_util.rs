@@ -119,6 +119,7 @@ impl File {
             |e, path: &PathBuf| eyre!("Failed to hash file: '{}'\nReason: '{}'", path.display(), e);
 
         match *self {
+
             File {
                 metadata: None,
                 kind,
@@ -129,6 +130,12 @@ impl File {
                 kind: FileKind::Delete,
                 ..
             } => Ok(false),
+            File {
+                source: None,
+                kind: FileKind::Symlink | FileKind::File | FileKind::RecursiveSymlink,
+                ref target,
+                ..
+            } => Err(eyre!("File '{}' missing_source", target.display())),
             File {
                 kind: FileKind::File | FileKind::Directory | FileKind::Modify,
                 permissions: Some(perms),
@@ -145,16 +152,17 @@ impl File {
                 metadata: Some(ref metadata),
                 ..
             } if gid != metadata.gid() => Ok(false),
-            File {
-                kind: FileKind::Symlink,
-                metadata: Some(ref metadata),
-                ..
-            } if !metadata.is_symlink() => Ok(false),
+
             File {
                 kind: FileKind::Symlink,
                 ref target,
                 source: Some(ref source),
                 ..
+                    // This will fail if target
+                    // is a dead symlink
+                    // which should only happen
+                    // if source does not exist
+                    // which should never happen
             } => Ok(fs::canonicalize(target)? == fs::canonicalize(source)?),
             File {
                 kind: FileKind::Directory,
@@ -176,12 +184,6 @@ impl File {
                 let source_hash = hash_file(source).map_err(|e| hash_error(e, source))?;
                 Ok(target_hash == source_hash)
             }
-            File {
-                source: None,
-                kind: FileKind::Symlink | FileKind::File | FileKind::RecursiveSymlink,
-                ref target,
-                ..
-            } => Err(eyre!("File '{}' missing_source", target.display())),
             File {
                 kind: FileKind::RecursiveSymlink | FileKind::Modify,
                 ..
