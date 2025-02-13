@@ -2,6 +2,7 @@ use crate::{
     file_util,
     manifest,
 };
+use blake3::Hash;
 use color_eyre::{
     Result,
     eyre::{
@@ -28,7 +29,6 @@ use std::{
         self,
         Metadata,
     },
-    io::Read,
     os::unix::fs::{
         self as unixFs,
         MetadataExt,
@@ -561,12 +561,10 @@ pub fn rmdir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn hash_file(filepath: &Path) -> Result<u64> {
-    let mut file = std::fs::File::open(filepath)?;
-    let mut buffer = Vec::new();
-    buffer.clear();
-    file.read_to_end(&mut buffer)?;
-    Ok(xxhash_rust::xxh3::xxh3_64(&buffer))
+pub fn hash_file(filepath: &Path) -> Result<Hash> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_mmap(filepath)?;
+    Ok(hasher.finalize())
 }
 
 pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
