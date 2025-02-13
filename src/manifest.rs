@@ -155,7 +155,7 @@ impl Manifest {
 
                 keep = !keep;
             } else if let Some(index) = self.files.iter().position(|inner| {
-                [FileKind::Symlink, FileKind::File, FileKind::Directory].contains(&inner.kind)
+                [FileKind::Symlink, FileKind::File].contains(&inner.kind)
                     && inner.kind == f.kind
                     && inner.target == f.target
             }) {
