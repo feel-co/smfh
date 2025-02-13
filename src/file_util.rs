@@ -39,9 +39,42 @@ use std::{
         PathBuf,
     },
 };
+pub struct FileWithMetadata {
+    pub source: Option<PathBuf>,
+    pub target: PathBuf,
+    pub kind: FileKind,
+    pub clobber: Option<bool>,
 
-impl File {
-    pub fn activate(&mut self, clobber_by_default: bool, prefix: &str) -> Result<()> {
+    pub permissions: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    pub deactivate: Option<bool>,
+
+    pub metadata: Option<Metadata>,
+}
+
+impl FileWithMetadata {
+    pub fn from_file(file: &File) -> Self {
+        FileWithMetadata {
+            source: file.source.clone(),
+            target: file.target.clone(),
+            kind: file.kind,
+
+            clobber: file.clobber,
+            permissions: file.permissions,
+            uid: file.uid,
+            gid: file.gid,
+            deactivate: file.deactivate,
+            metadata: None,
+        }
+    }
+
+    pub fn activate(
+        &mut self,
+        clobber_by_default: bool,
+        prefix: &str,
+        skip_check: bool,
+    ) -> Result<()> {
         if self.missing_source() {
             return Ok(());
         }
@@ -50,13 +83,16 @@ impl File {
 
         let clobber = self.clobber.unwrap_or(clobber_by_default);
 
-        if self.kind != FileKind::RecursiveSymlink {
+        if !skip_check && self.kind != FileKind::RecursiveSymlink {
             if self.check().unwrap_or(false) {
                 info!("File '{}' already correct", self.target.display());
                 return Ok(());
             }
 
-            if self.metadata.is_some() && ![FileKind::Modify, FileKind::Delete].contains(&self.kind)
+            if self.metadata.is_some()
+                && (![FileKind::Modify, FileKind::Delete, FileKind::Directory].contains(&self.kind)
+                    || self.kind == FileKind::Directory
+                        && !self.metadata.as_ref().unwrap().is_dir())
             {
                 if clobber {
                     delete(&self.target, self.metadata.as_ref().unwrap())?;
@@ -120,40 +156,40 @@ impl File {
 
         match *self {
 
-            File {
+            FileWithMetadata {
                 metadata: None,
                 kind,
                 ..
             } => Ok(kind == FileKind::Delete),
-            File {
+            FileWithMetadata {
                 metadata: Some(_),
                 kind: FileKind::Delete,
                 ..
             } => Ok(false),
-            File {
+            FileWithMetadata {
                 source: None,
                 kind: FileKind::Symlink | FileKind::File | FileKind::RecursiveSymlink,
                 ref target,
                 ..
             } => Err(eyre!("File '{}' missing_source", target.display())),
-            File {
+            FileWithMetadata {
                 kind: FileKind::File | FileKind::Directory | FileKind::Modify,
                 permissions: Some(perms),
                 metadata: Some(ref metadata),
                 ..
             } if perms != (metadata.mode() & 0o777) => Ok(false),
-            File {
+            FileWithMetadata {
                 uid: Some(uid),
                 metadata: Some(ref metadata),
                 ..
             } if uid != metadata.uid() => Ok(false),
-            File {
+            FileWithMetadata {
                 gid: Some(gid),
                 metadata: Some(ref metadata),
                 ..
             } if gid != metadata.gid() => Ok(false),
 
-            File {
+            FileWithMetadata {
                 kind: FileKind::Symlink,
                 ref target,
                 source: Some(ref source),
@@ -164,17 +200,17 @@ impl File {
                     // if source does not exist
                     // which should never happen
             } => Ok(fs::canonicalize(target)? == fs::canonicalize(source)?),
-            File {
+            FileWithMetadata {
                 kind: FileKind::Directory,
                 metadata: Some(ref metadata),
                 ..
             } => Ok(metadata.is_dir()),
-            File {
+            FileWithMetadata {
                 kind: FileKind::File,
                 metadata: Some(ref metadata),
                 ..
             } if !metadata.is_file() => Ok(false),
-            File {
+            FileWithMetadata {
                 kind: FileKind::File,
                 ref target,
                 source: Some(ref source),
@@ -184,7 +220,7 @@ impl File {
                 let source_hash = hash_file(source).map_err(|e| hash_error(e, source))?;
                 Ok(target_hash == source_hash)
             }
-            File {
+            FileWithMetadata {
                 kind: FileKind::RecursiveSymlink | FileKind::Modify,
                 ..
             } => Ok(true),
@@ -314,7 +350,7 @@ impl File {
 
     pub fn recursive_symlink(&self, prefix: &str, clobber: bool) {
         pub fn handle_entry(
-            file: &File,
+            file: &FileWithMetadata,
             entry: &DirEntry<((), ())>,
             base_path: &Path,
             clobber: bool,
@@ -390,7 +426,7 @@ impl File {
 
     pub fn recursive_cleanup(&self) {
         pub fn handle_entry(
-            file: &File,
+            file: &FileWithMetadata,
             entry: &DirEntry<((), ())>,
             base_path: &Path,
             dirs: &mut Vec<(PathBuf, usize)>,
@@ -540,5 +576,23 @@ pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
         fs::remove_file(filepath)?;
     }
     info!("Deleted '{}'", filepath.display());
+    Ok(())
+}
+
+pub fn atomic_activate(
+    file: &mut FileWithMetadata,
+    clobber_by_default: bool,
+    prefix: &str,
+) -> Result<()> {
+    let target = file.target.clone();
+
+    file.target.set_extension("smfh-temp");
+    file.activate(clobber_by_default, prefix, true)?;
+    info!(
+        "Renaming '{}' -> '{}'",
+        &file.target.display(),
+        target.display()
+    );
+    fs::rename(&file.target, target)?;
     Ok(())
 }

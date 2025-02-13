@@ -1,4 +1,10 @@
-use crate::VERSION;
+use crate::{
+    VERSION,
+    file_util::{
+        self,
+        FileWithMetadata,
+    },
+};
 use color_eyre::{
     Result,
     eyre::{
@@ -6,7 +12,6 @@ use color_eyre::{
         eyre,
     },
 };
-use derivative::Derivative;
 use log::{
     error,
     info,
@@ -20,7 +25,6 @@ use std::{
     cmp::Ordering,
     fs::{
         self,
-        Metadata,
     },
     io::BufReader,
     path::{
@@ -46,8 +50,7 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     Ok(Some(x))
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Derivative)]
-#[derivative(PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct File {
     pub source: Option<PathBuf>,
     pub target: PathBuf,
@@ -59,10 +62,6 @@ pub struct File {
     pub uid: Option<u32>,
     pub gid: Option<u32>,
     pub deactivate: Option<bool>,
-
-    #[serde(skip)]
-    #[derivative(PartialEq = "ignore")]
-    pub metadata: Option<Metadata>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,10 +118,9 @@ impl Manifest {
     }
 
     pub fn activate(&mut self, prefix: &str) {
-        self.files.sort_by_key(|f| f.kind);
-
-        for file in &mut self.files {
-            if let Err(e) = file.activate(self.clobber_by_default, prefix) {
+        for file in &self.files {
+            let mut with_metadata = FileWithMetadata::from_file(file);
+            if let Err(e) = with_metadata.activate(self.clobber_by_default, prefix, false) {
                 error!(
                     "Failed to activate file: '{}'\n Reason: '{}'",
                     file.target.display(),
@@ -133,10 +131,9 @@ impl Manifest {
     }
 
     pub fn deactivate(&mut self) {
-        self.files.sort_by_key(|f| f.kind);
-
-        for file in self.files.iter_mut().rev() {
-            if let Err(e) = file.deactivate() {
+        for file in self.files.iter().rev() {
+            let mut with_metadata = FileWithMetadata::from_file(file);
+            if let Err(e) = with_metadata.deactivate() {
                 error!(
                     "Failed to deactivate file: '{}'\n Reason: '{}'",
                     file.target.display(),
@@ -147,19 +144,54 @@ impl Manifest {
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {
+        let mut atomic_goodness: Vec<File> = vec![];
         let mut intersection: Vec<File> = vec![];
 
         old_manifest.files.retain(|f| {
-            let contains = self.files.contains(f);
-            if contains {
-                intersection.push(f.clone());
+            let mut keep = true;
+
+            if let Some(index) = self.files.iter().position(|inner| inner == f) {
+                intersection.push(self.files.swap_remove(index));
+
+                keep = !keep;
+            } else if let Some(index) = self.files.iter().position(|inner| {
+                [FileKind::Symlink, FileKind::File, FileKind::Directory].contains(&inner.kind)
+                    && inner.kind == f.kind
+                    && inner.target == f.target
+            }) {
+                atomic_goodness.push(self.files.swap_remove(index));
+
+                keep = !keep;
             }
-            !contains
+
+            keep
         });
 
-        self.files.retain(|f| !old_manifest.files.contains(f));
-
+        // Remove files in old manifest
+        // which aren't in new manifest
         old_manifest.deactivate();
+
+        // Atomic actions on files
+        // with same target but
+        // different source
+        let with_metadata: Vec<FileWithMetadata> = atomic_goodness
+            .iter()
+            .map(FileWithMetadata::from_file)
+            .collect();
+        for mut file in with_metadata {
+            if let Err(e) = file_util::atomic_activate(&mut file, self.clobber_by_default, prefix) {
+                error!(
+                    "Failed to activate file: '{}'\n Reason: '{}'",
+                    file.target.display(),
+                    e
+                );
+            };
+        }
+
+        // These files could technically just be
+        // Verified
+        self.files.append(&mut intersection);
+        // Activate new files
         self.activate(prefix);
     }
 }
