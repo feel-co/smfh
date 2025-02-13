@@ -530,7 +530,6 @@ dependencies = [
  "color-eyre",
  "jwalk",
  "log",
- "memmap2",
  "serde",
  "serde_json",
  "simplelog",
