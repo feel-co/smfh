@@ -1,8 +1,8 @@
 use crate::{
     VERSION,
     file_util::{
-        self,
         FileWithMetadata,
+        prefix_move,
     },
 };
 use color_eyre::{
@@ -15,6 +15,7 @@ use color_eyre::{
 use log::{
     error,
     info,
+    warn,
 };
 use serde::{
     Deserialize,
@@ -118,48 +119,52 @@ impl Manifest {
     }
 
     pub fn activate(&mut self, prefix: &str) {
-        for file in &self.files {
-            let mut with_metadata = FileWithMetadata::from_file(file);
-            if let Err(e) = with_metadata.activate(self.clobber_by_default, prefix, false) {
-                error!(
-                    "Failed to activate file: '{}'\n Reason: '{}'",
-                    file.target.display(),
-                    e
-                );
-            }
+        self.files.sort_by_key(|x| x.kind);
+        for mut file in self.files.iter().map(FileWithMetadata::from) {
+            let _ = file
+                .activate(self.clobber_by_default, prefix)
+                .inspect_err(|e| {
+                    error!(
+                        "Failed to activate file: '{}'\n Reason: '{}'",
+                        file.target.display(),
+                        e
+                    );
+                });
         }
     }
 
     pub fn deactivate(&mut self) {
-        for file in self.files.iter().rev() {
-            let mut with_metadata = FileWithMetadata::from_file(file);
-            if let Err(e) = with_metadata.deactivate() {
+        self.files.sort_by_key(|x| x.kind);
+        for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
+            let _ = file.deactivate().inspect_err(|e| {
                 error!(
                     "Failed to deactivate file: '{}'\n Reason: '{}'",
                     file.target.display(),
                     e
                 );
-            }
+            });
         }
     }
 
     pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {
-        let mut atomic_goodness: Vec<File> = vec![];
-        let mut intersection: Vec<File> = vec![];
+        let mut updated_files: Vec<(File, File)> = vec![];
+        let mut same_files: Vec<File> = vec![];
 
         old_manifest.files.retain(|f| {
             let mut keep = true;
 
             if let Some(index) = self.files.iter().position(|inner| inner == f) {
-                intersection.push(self.files.swap_remove(index));
+                same_files.push(self.files.swap_remove(index));
 
                 keep = !keep;
             } else if let Some(index) = self.files.iter().position(|inner| {
-                [FileKind::Symlink, FileKind::File].contains(&inner.kind)
-                    && inner.kind == f.kind
-                    && inner.target == f.target
+                matches!(inner, File {
+                    kind: FileKind::Symlink | FileKind::File,
+                    target,
+                    ..
+                } if target == &f.target)
             }) {
-                atomic_goodness.push(self.files.swap_remove(index));
+                updated_files.push((f.clone(), self.files.swap_remove(index)));
 
                 keep = !keep;
             }
@@ -171,26 +176,47 @@ impl Manifest {
         // which aren't in new manifest
         old_manifest.deactivate();
 
-        // Atomic actions on files
-        // with same target but
-        // different source
-        let with_metadata: Vec<FileWithMetadata> = atomic_goodness
-            .iter()
-            .map(FileWithMetadata::from_file)
-            .collect();
-        for mut file in with_metadata {
-            if let Err(e) = file_util::atomic_activate(&mut file, self.clobber_by_default, prefix) {
-                error!(
-                    "Failed to activate file: '{}'\n Reason: '{}'",
-                    file.target.display(),
-                    e
-                );
-            };
+        for (old, new) in updated_files {
+            if !old.clobber.unwrap_or(old_manifest.clobber_by_default) {
+                let mut f = FileWithMetadata::from(&old);
+
+                // Don't care if this errors
+                // metadata will just be none
+                let _ = f.set_metadata();
+
+                if f.metadata.is_some()
+                    && !f
+                        .check()
+                        .inspect_err(|e| warn!("Failed to check file: '{}', assuming file is incorrect\nReason: {}", f.target.display(), e))
+                        .unwrap_or(false)
+                {
+                 if let Err(e) = prefix_move(&f.target, prefix) {
+                     warn!("Failed to backup file '{}'\nReason: {}", f.target.display(), e);
+                 };
+                // if file existed but was wrong,
+                // atomic action cannot be taken
+                // so there's no point of forcing clobber
+
+                // except this double checks
+                 self.files.push(new.clone());
+                 continue;
+                }
+            }
+
+            let _ = FileWithMetadata::from(&new.clone())
+                .atomic_activate()
+                .inspect_err(|e| {
+                    error!(
+                        "Failed to activate file: '{}'\n Reason: '{}'",
+                        new.target.display(),
+                        e
+                    );
+                });
         }
 
         // These files could technically just be
         // Verified
-        self.files.append(&mut intersection);
+        self.files.append(&mut same_files);
         // Activate new files
         self.activate(prefix);
     }
