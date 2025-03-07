@@ -30,12 +30,6 @@ Note: any option set to `null` here is optional
       "clobber": null
     },
     {
-      "type": "recursiveSymlink",
-      "source": "./sources/recursiveSymlink",
-      "target": "./outputs/recursiveSymlink",
-      "clobber": null
-    },
-    {
       "type": "modify",
       "target": "./outputs/modified",
       "permissions": null,
@@ -65,11 +59,7 @@ With the `sources` directory containing:
 ```bash
 $ eza --long --no-user --no-time --no-filesize --tree -L 2 sources
 drwxr-xr-x sources
-.rw-r--r-- ├── file
-drwxr-xr-x └── recursiveSymlink
-drwxr-xr-x     ├── dir
-lrwxrwxrwx     └── symlink -> ../file
-
+.rw-r--r-- └── file
 ```
 
 And the `outputs` directory looking like this before hand:
@@ -87,8 +77,5 @@ drwxr-xr-x outputs
 drwxr-xr-x ├── directory
 .rw-r--r-- ├── file
 .rw-r--r-- ├── modified
-drwxr-xr-x ├── recursiveSymlink
-drwxr-xr-x │   ├── dir
-lrwxrwxrwx │   └── symlink -> /absolute/path/sources/file
 lrwxrwxrwx └── symlink -> /absolute/path/sources/file
 ```

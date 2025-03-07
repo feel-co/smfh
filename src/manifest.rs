@@ -69,7 +69,6 @@ pub struct File {
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
     Directory,
-    RecursiveSymlink,
     File,
     Symlink,
     Modify,
@@ -81,11 +80,10 @@ impl Ord for FileKind {
         fn value(kind: FileKind) -> u8 {
             match kind {
                 FileKind::Directory => 1,
-                FileKind::RecursiveSymlink => 2,
-                FileKind::File => 3,
-                FileKind::Symlink => 4,
-                FileKind::Modify => 5,
-                FileKind::Delete => 7,
+                FileKind::File => 2,
+                FileKind::Symlink => 3,
+                FileKind::Modify => 4,
+                FileKind::Delete => 5,
             }
         }
         value(*self).cmp(&value(*other))

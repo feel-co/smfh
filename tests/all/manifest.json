@@ -30,11 +30,6 @@
       "target": "./outputs/directory/symlink_in_dir"
     },
     {
-      "type": "recursiveSymlink",
-      "source": "./sources/recursiveSymlink",
-      "target": "./outputs/recursiveSymlink"
-    },
-    {
       "type": "modify",
       "target": "./outputs/modified",
       "permissions": "770"

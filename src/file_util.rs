@@ -10,12 +10,7 @@ use color_eyre::{
         eyre,
     },
 };
-use jwalk::{
-    DirEntry,
-    WalkDir,
-};
 use log::{
-    error,
     info,
     warn,
 };
@@ -85,42 +80,36 @@ impl FileWithMetadata {
             return Ok(());
         };
 
-        if self.kind != FileKind::RecursiveSymlink {
-            if self.check().unwrap_or(false) {
-                info!("File '{}' already correct", self.target.display());
-                return Ok(());
-            }
+        if self.check().unwrap_or(false) {
+            info!("File '{}' already correct", self.target.display());
+            return Ok(());
+        }
 
-            if match self {
-                FileWithMetadata { metadata: None, .. }
-                | FileWithMetadata {
-                    kind: FileKind::Modify | FileKind::Delete,
-                    ..
-                } => false,
-                // Don't clobber directories
-                // If they're supposed to be
-                // directories
-                FileWithMetadata {
-                    kind: FileKind::Directory,
-                    metadata: Some(metadata),
-                    ..
-                } => !metadata.is_dir(),
-                _ => true,
-            } {
-                if clobber {
-                    delete(&self.target, self.metadata.as_ref().unwrap())?;
-                } else {
-                    prefix_move(&self.target, prefix)?;
-                }
+        if match self {
+            FileWithMetadata { metadata: None, .. }
+            | FileWithMetadata {
+                kind: FileKind::Modify | FileKind::Delete,
+                ..
+            } => false,
+            // Don't clobber directories
+            // If they're supposed to be
+            // directories
+            FileWithMetadata {
+                kind: FileKind::Directory,
+                metadata: Some(metadata),
+                ..
+            } => !metadata.is_dir(),
+            _ => true,
+        } {
+            if clobber {
+                delete(&self.target, self.metadata.as_ref().unwrap())?;
+            } else {
+                prefix_move(&self.target, prefix)?;
             }
-        };
+        }
 
         match self.kind {
             FileKind::Directory => self.directory(),
-            FileKind::RecursiveSymlink => {
-                self.recursive_symlink(prefix, clobber);
-                Ok(())
-            }
             FileKind::File => self.copy(),
             FileKind::Symlink => self.symlink(),
             FileKind::Modify => self.chmod_chown(),
@@ -163,7 +152,7 @@ impl FileWithMetadata {
             return Ok(());
         }
 
-        if self.kind != FileKind::RecursiveSymlink && !self.check()? {
+        if !self.check()? {
             return Err(eyre!("File is not the same as expected"));
         }
 
@@ -172,14 +161,6 @@ impl FileWithMetadata {
             FileKind::Delete | FileKind::Modify => Ok(()),
             // delete only if directory is empty
             FileKind::Directory => rmdir(&self.target),
-            // this has it's own error handling
-            FileKind::RecursiveSymlink => {
-                if self.missing_source() {
-                    return Err(eyre!("Missing source"));
-                }
-                self.recursive_cleanup();
-                Ok(())
-            }
             // delete only if types match
             FileKind::Symlink | FileKind::File => {
                 delete(&self.target, self.metadata.as_ref().unwrap())
@@ -204,7 +185,7 @@ impl FileWithMetadata {
             // function is ever called
             FileWithMetadata {
                 source: None,
-                kind: FileKind::Symlink | FileKind::File | FileKind::RecursiveSymlink,
+                kind: FileKind::Symlink | FileKind::File,
                 ref target,
                 ..
             } => Err(eyre!("File '{}' missing_source", target.display())),
@@ -264,7 +245,7 @@ impl FileWithMetadata {
                     }
             }
             FileWithMetadata {
-                kind: FileKind::RecursiveSymlink | FileKind::Modify,
+                kind: FileKind::Modify,
                 ..
             } => Ok(true),
         }
@@ -285,7 +266,7 @@ impl FileWithMetadata {
         match *self {
             FileWithMetadata {
                 source: None,
-                kind: FileKind::File | FileKind::Symlink | FileKind::RecursiveSymlink,
+                kind: FileKind::File | FileKind::Symlink,
                 ..
             } => {
                 warn!(
@@ -393,165 +374,7 @@ impl FileWithMetadata {
         self.chmod_chown()?;
         Ok(())
     }
-
-    pub fn recursive_symlink(&self, prefix: &str, clobber: bool) {
-        pub fn handle_entry(
-            file: &FileWithMetadata,
-            entry: &DirEntry<((), ())>,
-            base_path: &Path,
-            clobber: bool,
-            prefix: &str,
-        ) -> Result<()> {
-            let target_file = &file.target.join(entry.path().strip_prefix(base_path)?);
-            let metadata = fs::symlink_metadata(target_file);
-
-            match metadata {
-                Ok(x) => {
-                    if entry.file_type().is_dir() && x.is_dir() {
-                        return Ok(());
-                    };
-
-                    if fs::canonicalize(target_file)? == fs::canonicalize(entry.path())? {
-                        return Ok(());
-                    };
-
-                    if clobber {
-                        delete(target_file, &x)?;
-                    } else {
-                        prefix_move(target_file, prefix)?;
-                    };
-                }
-                Err(e) => {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        return Err(eyre!("{}", e));
-                    };
-                }
-            };
-
-            if entry.file_type().is_dir() {
-                mkdir(target_file)?;
-                return Ok(());
-            };
-
-            symlink(fs::canonicalize(entry.path())?, target_file)?;
-
-            info!(
-                "Symlinked '{}' -> '{}'",
-                entry.path().display(),
-                target_file.display(),
-            );
-            Ok(())
-        }
-
-        let base_path = self.source.as_ref().unwrap();
-        let walkdir = WalkDir::new(base_path)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|f| match f {
-                Ok(x) => Some(x),
-                Err(e) => {
-                    error!(
-                        "Recursive file walking error on base path: {}\n{}",
-                        base_path.display(),
-                        e
-                    );
-                    None
-                }
-            });
-
-        for entry in walkdir {
-            if let Err(e) = handle_entry(self, &entry, base_path, clobber, prefix) {
-                error!(
-                    "Failed to create file '{}'\nReason: {}",
-                    entry.path().display(),
-                    e
-                );
-            };
-        }
-    }
-
-    pub fn recursive_cleanup(&self) {
-        pub fn handle_entry(
-            file: &FileWithMetadata,
-            entry: &DirEntry<((), ())>,
-            base_path: &Path,
-            dirs: &mut Vec<(PathBuf, usize)>,
-        ) -> Result<()> {
-            let target_file = &file.target.join(entry.path().strip_prefix(base_path)?);
-
-            let metadata = match fs::symlink_metadata(target_file) {
-                Ok(x) => x,
-                Err(e) => {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        return Err(eyre!("Error on file '{}', {}", target_file.display(), e));
-                    };
-                    return Ok(());
-                }
-            };
-
-            if metadata.is_symlink() {
-                if fs::canonicalize(target_file)? == fs::canonicalize(entry.path())? {
-                    fs::remove_file(target_file)?;
-                };
-            } else if metadata.is_dir() && entry.file_type().is_dir() {
-                dirs.push((target_file.clone(), entry.depth()));
-                return Ok(());
-            } else {
-                info!(
-                    "Ignoring file: '{}', in recursiveSymlink directory: '{}'",
-                    &target_file.display(),
-                    base_path.display()
-                );
-            }
-            info!(
-                "Deleting '{}' -> '{}'",
-                entry.path().display(),
-                target_file.display(),
-            );
-            Ok(())
-        }
-
-        let base_path = self.source.as_ref().unwrap();
-        let walkdir = WalkDir::new(base_path)
-            .follow_links(true)
-            .into_iter()
-            .filter_map(|f| match f {
-                Ok(x) => Some(x),
-                Err(e) => {
-                    error!(
-                        "Recursive file walking error on base path: '{}'\n{}",
-                        base_path.display(),
-                        e
-                    );
-                    None
-                }
-            });
-
-        let mut dirs: Vec<(PathBuf, usize)> = vec![];
-
-        for entry in walkdir {
-            if let Err(e) = handle_entry(self, &entry, base_path, &mut dirs) {
-                error!(
-                    "Failed to remove file '{}'\nReason: {}",
-                    entry.path().display(),
-                    e
-                );
-            };
-        }
-        dirs.sort_by(|a, b| b.1.cmp(&a.1));
-        for dir in dirs {
-            if let Err(e) = rmdir(&dir.0) {
-                error!(
-                    "Didn't remove directory '{}' of recursiveSymlink '{}'\n Error: {}",
-                    dir.0.display(),
-                    base_path.display(),
-                    e
-                );
-            };
-        }
-    }
 }
-
 pub fn mkdir(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(_) => {
