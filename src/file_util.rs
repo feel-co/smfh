@@ -76,7 +76,10 @@ impl FileWithMetadata {
 
         let clobber = self.clobber.unwrap_or(clobber_by_default);
 
-        if clobber && self.atomic_activate()? {
+        if clobber
+            && !self.metadata.as_ref().is_none_or(|x| x.is_dir())
+            && self.atomic_activate()?
+        {
             return Ok(());
         };
 
