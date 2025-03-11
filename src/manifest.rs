@@ -201,7 +201,7 @@ impl Manifest {
                 }
             }
 
-            let _ = FileWithMetadata::from(&new.clone())
+            let atomic = FileWithMetadata::from(&new.clone())
                 .atomic_activate()
                 .inspect_err(|e| {
                     error!(
@@ -210,6 +210,9 @@ impl Manifest {
                         e
                     );
                 });
+            if atomic.unwrap_or(false) {
+                self.files.push(new);
+            };
         }
 
         // These files could technically just be

@@ -12,7 +12,7 @@ Note: any option set to `null` here is optional
 {
   "files": [
     {
-      "type": "file",
+      "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/file",
       "permissions": null,

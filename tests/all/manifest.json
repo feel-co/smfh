@@ -6,12 +6,12 @@
       "target": "./outputs/link"
     },
     {
-      "type": "file",
+      "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/file"
     },
     {
-      "type": "file",
+      "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/file_which_has_been_modified"
     },
@@ -20,7 +20,7 @@
       "target": "./outputs/directory"
     },
     {
-      "type": "file",
+      "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/directory/file_in_dir"
     },
@@ -35,7 +35,7 @@
       "permissions": "770"
     },
     {
-      "type": "file",
+      "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/modified_file",
       "permissions": "700"

@@ -76,10 +76,7 @@ impl FileWithMetadata {
 
         let clobber = self.clobber.unwrap_or(clobber_by_default);
 
-        if clobber
-            && !self.metadata.as_ref().is_none_or(|x| x.is_dir())
-            && self.atomic_activate()?
-        {
+        if clobber && self.metadata.is_some() && self.atomic_activate()? {
             return Ok(());
         };
 
@@ -123,7 +120,19 @@ impl FileWithMetadata {
     pub fn atomic_activate(&mut self) -> Result<bool> {
         match self.kind {
             FileKind::Symlink | FileKind::File => {
+                let target_is_dir = self.metadata.as_ref().unwrap().is_dir();
+                let target_is_empty = self.source.as_ref().unwrap().read_dir()?.next().is_none();
+
+                let source_is_dir = fs::symlink_metadata(self.source.as_ref().unwrap())?.is_dir();
+
+                if target_is_dir != source_is_dir
+                    || target_is_dir && source_is_dir && !target_is_empty
+                {
+                    return Ok(false);
+                };
+
                 let target = self.target.clone();
+
                 self.target.set_extension("smfh-temp");
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
