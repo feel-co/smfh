@@ -24,6 +24,7 @@ use serde::{
 };
 use std::{
     cmp::Ordering,
+    fmt,
     fs::{
         self,
     },
@@ -69,10 +70,22 @@ pub struct File {
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
     Directory,
-    File,
+    Copy,
     Symlink,
     Modify,
     Delete,
+}
+impl fmt::Display for FileKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self {
+            FileKind::Directory => "directory",
+            FileKind::Copy => "copy",
+            FileKind::Symlink => "symlink",
+            FileKind::Modify => "modify",
+            FileKind::Delete => "delete",
+        };
+        write!(f, "{name}")
+    }
 }
 
 impl Ord for FileKind {
@@ -80,7 +93,7 @@ impl Ord for FileKind {
         fn value(kind: FileKind) -> u8 {
             match kind {
                 FileKind::Directory => 1,
-                FileKind::File => 2,
+                FileKind::Copy => 2,
                 FileKind::Symlink => 3,
                 FileKind::Modify => 4,
                 FileKind::Delete => 5,
@@ -157,7 +170,7 @@ impl Manifest {
                 keep = !keep;
             } else if let Some(index) = self.files.iter().position(|inner| {
                 matches!(inner, File {
-                    kind: FileKind::Symlink | FileKind::File,
+                    kind: FileKind::Symlink | FileKind::Copy,
                     target,
                     ..
                 } if target == &f.target)
@@ -205,7 +218,7 @@ impl Manifest {
                 .atomic_activate()
                 .inspect_err(|e| {
                     error!(
-                        "Failed to activate file: '{}'\n Reason: '{}'",
+                        "Failed to (atomic) activate file: '{}'\n Reason: '{}'",
                         new.target.display(),
                         e
                     );

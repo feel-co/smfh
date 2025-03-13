@@ -6,11 +6,13 @@ use blake3::Hash;
 use color_eyre::{
     Result,
     eyre::{
+        Context,
         OptionExt,
         eyre,
     },
 };
 use log::{
+    debug,
     info,
     warn,
 };
@@ -68,7 +70,7 @@ impl From<&File> for FileWithMetadata {
 }
 impl FileWithMetadata {
     pub fn activate(&mut self, clobber_by_default: bool, prefix: &str) -> Result<()> {
-        if self.missing_source() {
+        if self.check_source() {
             return Ok(());
         }
 
@@ -76,7 +78,7 @@ impl FileWithMetadata {
 
         let clobber = self.clobber.unwrap_or(clobber_by_default);
 
-        if clobber && self.metadata.is_some() && self.atomic_activate()? {
+        if clobber && self.metadata.is_some() && self.atomic_activate().wrap_err("(atomic)")? {
             return Ok(());
         };
 
@@ -110,7 +112,7 @@ impl FileWithMetadata {
 
         match self.kind {
             FileKind::Directory => self.directory(),
-            FileKind::File => self.copy(),
+            FileKind::Copy => self.copy(),
             FileKind::Symlink => self.symlink(),
             FileKind::Modify => self.chmod_chown(),
             FileKind::Delete => delete(&self.target, self.metadata.as_ref().unwrap()),
@@ -119,14 +121,14 @@ impl FileWithMetadata {
 
     pub fn atomic_activate(&mut self) -> Result<bool> {
         match self.kind {
-            FileKind::Symlink | FileKind::File => {
+            FileKind::Symlink | FileKind::Copy => {
                 let target_is_dir = self.metadata.as_ref().unwrap().is_dir();
-                let target_is_empty = self.source.as_ref().unwrap().read_dir()?.next().is_none();
-
                 let source_is_dir = fs::symlink_metadata(self.source.as_ref().unwrap())?.is_dir();
 
                 if target_is_dir != source_is_dir
-                    || target_is_dir && source_is_dir && !target_is_empty
+                    || target_is_dir
+                        && source_is_dir
+                        && self.source.as_ref().unwrap().read_dir()?.next().is_some()
                 {
                     return Ok(false);
                 };
@@ -136,7 +138,7 @@ impl FileWithMetadata {
                 self.target.set_extension("smfh-temp");
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
-                    FileKind::File => self.copy(),
+                    FileKind::Copy => self.copy(),
                     _ => panic!("This should never happen"),
                 }?;
                 info!(
@@ -172,9 +174,17 @@ impl FileWithMetadata {
             // no-op on deactivation
             FileKind::Delete | FileKind::Modify => Ok(()),
             // delete only if directory is empty
-            FileKind::Directory => rmdir(&self.target),
+            FileKind::Directory => match self.metadata.as_ref() {
+                Some(x) if x.is_dir() => {
+                    fs::remove_dir(&self.target)?;
+                    info!("Deleting directory '{}'", self.target.display());
+                    Ok(())
+                }
+                Some(_) => Err(eyre!("File is not directory")),
+                None => Err(eyre!("Cannot access file")),
+            },
             // delete only if types match
-            FileKind::Symlink | FileKind::File => {
+            FileKind::Symlink | FileKind::Copy => {
                 delete(&self.target, self.metadata.as_ref().unwrap())
             }
         }
@@ -197,12 +207,12 @@ impl FileWithMetadata {
             // function is ever called
             FileWithMetadata {
                 source: None,
-                kind: FileKind::Symlink | FileKind::File,
+                kind: FileKind::Symlink | FileKind::Copy,
                 ref target,
                 ..
             } => Err(eyre!("File '{}' missing_source", target.display())),
             FileWithMetadata {
-                kind: FileKind::File | FileKind::Directory | FileKind::Modify,
+                kind: FileKind::Copy | FileKind::Directory | FileKind::Modify,
                 permissions: Some(perms),
                 metadata: Some(ref metadata),
                 ..
@@ -237,12 +247,12 @@ impl FileWithMetadata {
                 ..
             } => Ok(metadata.is_dir()),
             FileWithMetadata {
-                kind: FileKind::File,
-                metadata: Some(ref metadata),
+                kind: FileKind::Copy,
+            metadata: Some(ref metadata),
                 ..
             } if !metadata.is_file() => Ok(false),
             FileWithMetadata {
-                kind: FileKind::File,
+                kind: FileKind::Copy,
                 ref target,
                 source: Some(ref source),
                 ..
@@ -264,29 +274,61 @@ impl FileWithMetadata {
     }
 
     pub fn set_metadata(&mut self) -> Result<()> {
-        let metadata = fs::symlink_metadata(&self.target);
-        if let Err(ref e) = metadata {
-            if e.kind() == std::io::ErrorKind::NotFound {
+        match fs::symlink_metadata(&self.target) {
+            Ok(x) => {
+                self.metadata = Some(x);
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 self.metadata = None;
-                return Ok(());
-            };
+                Ok(())
+            }
+            Err(e) => Err(e).wrap_err("while setting metadata"),
         }
-        self.metadata = Some(metadata?);
-        Ok(())
     }
-    pub fn missing_source(&self) -> bool {
+    pub fn check_source(&self) -> bool {
         match *self {
             FileWithMetadata {
+                source: Some(ref s),
+                kind: FileKind::Copy | FileKind::Symlink,
+                ..
+            } if fs::symlink_metadata(s)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                warn!(
+                    "{} with target '{}' source '{}' does not exist",
+                    self.kind,
+                    self.target.display(),
+                    s.display()
+                );
+                true
+            }
+            FileWithMetadata {
                 source: None,
-                kind: FileKind::File | FileKind::Symlink,
+                kind: FileKind::Copy | FileKind::Symlink,
                 ..
             } => {
                 warn!(
-                    "File '{}' missing source, skipping...",
+                    "{} with target '{}' missing source, skipping...",
+                    self.kind,
                     self.target.display()
                 );
                 true
             }
+            FileWithMetadata {
+                source: Some(ref s),
+                kind: FileKind::Copy,
+                ..
+            } if fs::symlink_metadata(s).is_ok_and(|x| !x.is_file()) => {
+                warn!(
+                    "{} with target '{}' source '{}' is a directory, only files are permitted. Skipping...",
+                    self.kind,
+                    self.target.display(),
+                    s.display()
+                );
+                true
+            }
+
             _ => false,
         }
     }
@@ -397,7 +439,7 @@ pub fn mkdir(path: &Path) -> Result<()> {
             if !x.is_dir() {
                 return Err(eyre!("File in way of '{}'", path.display()));
             };
-            info!("Directory '{}' already exists", path.display());
+            debug!("Directory '{}' already exists", path.display());
         }
     };
     Ok(())
@@ -421,24 +463,12 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
         .ok_or_eyre(format!("Failed to get parent of file '{}'", path.display()))?
         .join(PathBuf::from(appended_path));
 
-    if fs::symlink_metadata(&new_path).is_ok() {
-        prefix_move(&new_path, prefix)?;
+    if let Ok(metadata) = fs::symlink_metadata(&new_path) {
+        delete(&new_path, &metadata)?;
     };
 
     fs::rename(canon_path, &new_path)?;
     info!("Renaming '{}' -> '{}'", path.display(), new_path.display());
-    Ok(())
-}
-
-pub fn rmdir(path: &Path) -> Result<()> {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return Ok(());
-    };
-    if !metadata.is_dir() {
-        return Err(eyre!("Path '{}' is not a directory", path.display()));
-    }
-    fs::remove_dir(path)?;
-    info!("Deleting directory '{}'", path.display());
     Ok(())
 }
 
