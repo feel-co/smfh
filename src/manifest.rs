@@ -70,6 +70,35 @@ pub struct File {
     pub deactivate: Option<bool>,
 }
 
+impl Ord for File {
+    fn cmp(&self, other: &Self) -> Ordering {
+        fn value(f: &File) -> u8 {
+            match f.kind {
+                FileKind::Directory => 1,
+                FileKind::Copy => 2,
+                FileKind::Symlink => 3,
+                FileKind::Modify => 4,
+                FileKind::Delete => 5,
+            }
+        }
+
+        if other.kind == self.kind {
+            fn parents(p: &Path) -> usize {
+                p.ancestors().count()
+            }
+            parents(&self.target).cmp(&parents(&other.target))
+        } else {
+            value(self).cmp(&value(other))
+        }
+    }
+}
+
+impl PartialOrd for File {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
@@ -89,27 +118,6 @@ impl fmt::Display for FileKind {
             FileKind::Delete => "delete",
         };
         write!(f, "{name}")
-    }
-}
-
-impl Ord for FileKind {
-    fn cmp(&self, other: &Self) -> Ordering {
-        fn value(kind: FileKind) -> u8 {
-            match kind {
-                FileKind::Directory => 1,
-                FileKind::Copy => 2,
-                FileKind::Symlink => 3,
-                FileKind::Modify => 4,
-                FileKind::Delete => 5,
-            }
-        }
-        value(*self).cmp(&value(*other))
-    }
-}
-
-impl PartialOrd for FileKind {
-    fn partial_cmp(&self, other: &FileKind) -> Option<Ordering> {
-        Some(self.cmp(other))
     }
 }
 
@@ -161,7 +169,7 @@ impl Manifest {
     }
 
     pub fn activate(&mut self, prefix: &str) {
-        self.files.sort_by_key(|x| x.kind);
+        self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from) {
             let _ = file
                 .activate(self.clobber_by_default, prefix)
@@ -176,7 +184,7 @@ impl Manifest {
     }
 
     pub fn deactivate(&mut self) {
-        self.files.sort_by_key(|x| x.kind);
+        self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
             let _ = file.deactivate().inspect_err(|e| {
                 error!(
