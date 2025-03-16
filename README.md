@@ -79,3 +79,10 @@ drwxr-xr-x ├── directory
 .rw-r--r-- ├── modified
 lrwxrwxrwx └── symlink -> /absolute/path/sources/file
 ```
+
+### Exit codes
+
+- 0 Success
+- 1 Generic failure
+- 2 Manifest/Program version mismatch
+- 3 Manifest deserialization failure
