@@ -9,6 +9,7 @@ use color_eyre::{
     Result,
     eyre::{
         Context,
+        OptionExt,
         eyre,
     },
 };
@@ -22,9 +23,12 @@ use serde::{
     Deserializer,
     Serialize,
 };
+use serde_json::Value;
 use std::{
     cmp::Ordering,
-    fmt,
+    fmt::{
+        self,
+    },
     fs::{
         self,
     },
@@ -33,6 +37,7 @@ use std::{
         Path,
         PathBuf,
     },
+    process,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -110,23 +115,33 @@ impl PartialOrd for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path) -> Result<Manifest> {
-        let file = fs::File::open(manifest_path).wrap_err("Failed to read manifest")?;
-        let deserialized_manifest: Manifest = serde_json::from_reader(BufReader::new(file))
-            .wrap_err("Failed to deserialize manifest")?;
+    pub fn read(manifest_path: &Path) -> Manifest {
+        (move || -> Result<Manifest> {
+            let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
+            let root: Value = serde_json::from_reader(BufReader::new(&file))
+                .wrap_err("Failed to deserialize manifest")?;
+            let version = root
+                .get("version")
+                .ok_or_eyre("Failed to get version from manifest")?;
 
-        info!("Deserialized manifest: '{}'", manifest_path.display());
+            if version != VERSION {
+                error!(
+                    "Program version: '{}' Manifest version: '{}'\n Version mismatch, exiting!",
+                    VERSION, version
+                );
+                process::exit(2)
+            };
 
-        if deserialized_manifest.version != VERSION {
-            error!(
-                "Program version: '{}' Manifest version: '{}'",
-                VERSION, deserialized_manifest.version
-            );
-            return Err(eyre!(
-                "Version mismatch!\n Program and manifest version must be the same"
-            ));
-        };
-        Ok(deserialized_manifest)
+            let deserialized_manifest: Manifest =
+                serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
+
+            info!("Deserialized manifest: '{}'", manifest_path.display());
+            Ok(deserialized_manifest)
+        })()
+        .unwrap_or_else(|e| {
+            error!("{}", e);
+            process::exit(3)
+        })
     }
 
     pub fn activate(&mut self, prefix: &str) {

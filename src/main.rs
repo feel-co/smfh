@@ -6,7 +6,6 @@ use args::{
     Subcommands,
 };
 use clap::Parser;
-use color_eyre::eyre::Result;
 use log::info;
 use manifest::Manifest;
 use simplelog::{
@@ -19,7 +18,7 @@ use simplelog::{
 
 pub const VERSION: u16 = 1;
 
-fn main() -> Result<()> {
+fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
 
     let args = Args::parse();
@@ -35,17 +34,17 @@ fn main() -> Result<()> {
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
-    )?;
+    )
+    .expect("Failed to initialize logger");
 
     info!("Program version: '{}'", VERSION);
     match args.sub_command {
-        Subcommands::Deactivate { manifest } => Manifest::read(&manifest)?.deactivate(),
-        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest)?.activate(&prefix),
+        Subcommands::Deactivate { manifest } => Manifest::read(&manifest).deactivate(),
+        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest).activate(&prefix),
         Subcommands::Diff {
             prefix,
             manifest,
             old_manifest,
-        } => Manifest::read(&manifest)?.diff(Manifest::read(&old_manifest)?, &prefix),
+        } => Manifest::read(&manifest).diff(Manifest::read(&old_manifest), &prefix),
     };
-    Ok(())
 }
