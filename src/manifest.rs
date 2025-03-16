@@ -10,7 +10,6 @@ use color_eyre::{
     eyre::{
         Context,
         OptionExt,
-        eyre,
     },
 };
 use log::{
@@ -116,7 +115,7 @@ impl PartialOrd for FileKind {
 
 impl Manifest {
     pub fn read(manifest_path: &Path) -> Manifest {
-        (move || -> Result<Manifest> {
+        let mut manifest = (move || -> Result<Manifest> {
             let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
             let root: Value = serde_json::from_reader(BufReader::new(&file))
                 .wrap_err("Failed to deserialize manifest")?;
@@ -141,7 +140,24 @@ impl Manifest {
         .unwrap_or_else(|e| {
             error!("{}", e);
             process::exit(3)
-        })
+        });
+
+        if !cfg!(debug_assertions) {
+            manifest.files.retain(|f| {
+                let absolute =
+                    f.target.is_absolute() && f.source.as_ref().is_none_or(|x| x.is_absolute());
+                if !absolute {
+                    warn!(
+                        "{} with target '{}' is not absolute, ignoring.",
+                        f.kind,
+                        f.target.display()
+                    );
+                };
+                absolute
+            });
+        }
+
+        manifest
     }
 
     pub fn activate(&mut self, prefix: &str) {
