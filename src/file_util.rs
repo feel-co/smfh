@@ -78,7 +78,7 @@ impl FileWithMetadata {
 
         let clobber = self.clobber.unwrap_or(clobber_by_default);
 
-        if clobber && self.metadata.is_some() && self.atomic_activate().wrap_err("(atomic)")? {
+        if clobber && self.metadata.is_some() && self.atomic_activate().context("(atomic)")? {
             return Ok(());
         };
 
@@ -283,7 +283,7 @@ impl FileWithMetadata {
                 self.metadata = None;
                 Ok(())
             }
-            Err(e) => Err(e).wrap_err("while setting metadata"),
+            Err(e) => Err(e).context("while setting metadata"),
         }
     }
     pub fn check_source(&self) -> bool {

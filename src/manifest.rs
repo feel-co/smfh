@@ -124,9 +124,9 @@ impl fmt::Display for FileKind {
 impl Manifest {
     pub fn read(manifest_path: &Path) -> Manifest {
         let mut manifest = (move || -> Result<Manifest> {
-            let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
+            let file = fs::File::open(manifest_path).context("Failed to open manifest")?;
             let root: Value = serde_json::from_reader(BufReader::new(&file))
-                .wrap_err("Failed to deserialize manifest")?;
+                .context("Failed to deserialize manifest")?;
             let version = root
                 .get("version")
                 .ok_or_eyre("Failed to get version from manifest")?;
@@ -140,7 +140,7 @@ impl Manifest {
             };
 
             let deserialized_manifest: Manifest =
-                serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
+                serde_json::from_value(root).context("Failed to deserialize manifest")?;
 
             info!("Deserialized manifest: '{}'", manifest_path.display());
             Ok(deserialized_manifest)
