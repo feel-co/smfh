@@ -33,6 +33,7 @@ use std::{
     },
     io::BufReader,
     path::{
+        Component,
         Path,
         PathBuf,
     },
@@ -152,8 +153,9 @@ impl Manifest {
 
         if !cfg!(debug_assertions) {
             manifest.files.retain(|f| {
-                let absolute =
-                    f.target.is_absolute() && f.source.as_ref().is_none_or(|x| x.is_absolute());
+                let absolute = f.target.is_absolute()
+                    && !f.target.components().any(|x| x == Component::ParentDir)
+                    && f.source.as_ref().is_none_or(|x| x.is_absolute());
                 if !absolute {
                     warn!(
                         "{} with target '{}' is not absolute, ignoring.",
