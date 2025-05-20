@@ -1,0 +1,12 @@
+{
+  "files": [
+    {
+      "type": "copy",
+      "source": "/home/gerg/Projects/smfh/tests/all/sources/file",
+      "target": "/home/gerg/Projects/smfh/tests/all/outputs/link1",
+      "clobber": true
+    }
+  ],
+  "clobber_by_default": true,
+  "version": 1
+}
