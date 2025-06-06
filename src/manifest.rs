@@ -268,7 +268,7 @@ impl Manifest {
                     err
                 );
             });
-            if res.unwrap_or(false) {
+            if ! res.unwrap_or(false) {
                 self.files.push(new);
             }
         }
