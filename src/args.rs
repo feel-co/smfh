@@ -20,7 +20,7 @@ pub enum Subcommands {
         #[arg()]
         manifest: PathBuf,
 
-        #[clap(long, short, action, default_value = ".backup")]
+        #[clap(long, short, action, default_value = ".backup-")]
         prefix: String,
     },
     Deactivate {
@@ -28,7 +28,7 @@ pub enum Subcommands {
         manifest: PathBuf,
     },
     Diff {
-        #[clap(long, short, action, default_value = ".backup")]
+        #[clap(long, short, action, default_value = ".backup-")]
         prefix: String,
 
         #[arg()]

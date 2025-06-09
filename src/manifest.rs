@@ -249,17 +249,25 @@ impl Manifest {
                  continue;
                 }
             }
+            let mut atomic = FileWithMetadata::from(&new.clone());
 
-            let atomic = FileWithMetadata::from(&new.clone())
-                .atomic_activate()
-                .inspect_err(|err| {
-                    error!(
-                        "Failed to (atomic) activate file: '{}'\n Reason: '{}'",
-                        new.target.display(),
-                        err
-                    );
-                });
-            if atomic.unwrap_or(false) {
+            if let Err(err) = atomic.set_metadata() {
+                warn!(
+                    "Failed to get metadata for file '{}'\nReason: {}",
+                    atomic.target.display(),
+                    err
+                );
+                continue;
+            }
+
+            let res = atomic.atomic_activate().inspect_err(|err| {
+                error!(
+                    "Failed to (atomic) activate file: '{}'\n Reason: '{}'",
+                    new.target.display(),
+                    err
+                );
+            });
+            if ! res.unwrap_or(false) {
                 self.files.push(new);
             }
         }

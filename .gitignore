@@ -2,4 +2,4 @@ target
 .direnv
 *result*
 .backup*
-./tests/*/outputs/*
+tests/*/outputs/*
