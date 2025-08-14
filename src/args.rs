@@ -10,6 +10,13 @@ pub struct Args {
     #[arg(short, long)]
     pub verbose: bool,
 
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Allows use of relative paths and environment variable substitutions in paths"
+    )]
+    pub impure: bool,
+
     #[command(subcommand)]
     pub sub_command: Subcommands,
 }

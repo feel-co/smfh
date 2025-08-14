@@ -39,12 +39,15 @@ fn main() {
 
     info!("Program version: '{VERSION}'");
     match args.sub_command {
-        Subcommands::Deactivate { manifest } => Manifest::read(&manifest).deactivate(),
-        Subcommands::Activate { manifest, prefix } => Manifest::read(&manifest).activate(&prefix),
+        Subcommands::Deactivate { manifest } => Manifest::read(&manifest, args.impure).deactivate(),
+        Subcommands::Activate { manifest, prefix } => {
+            Manifest::read(&manifest, args.impure).activate(&prefix);
+        }
         Subcommands::Diff {
             prefix,
             manifest,
             old_manifest,
-        } => Manifest::read(&manifest).diff(Manifest::read(&old_manifest), &prefix),
+        } => Manifest::read(&manifest, args.impure)
+            .diff(Manifest::read(&old_manifest, args.impure), &prefix),
     }
 }
