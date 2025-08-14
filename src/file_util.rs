@@ -485,11 +485,15 @@ pub fn hash_file(filepath: &Path) -> Option<Hash> {
 }
 
 pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
-    if metadata.is_dir() {
-        fs::remove_dir_all(filepath)?;
+    if filepath.try_exists().is_ok() {
+        if metadata.is_dir() {
+            fs::remove_dir_all(filepath)?;
+        } else {
+            fs::remove_file(filepath)?;
+        }
+        info!("Deleted '{}'", filepath.display());
     } else {
-        fs::remove_file(filepath)?;
+        info!("Path '{}' already deleted", filepath.display());
     }
-    info!("Deleted '{}'", filepath.display());
     Ok(())
 }
