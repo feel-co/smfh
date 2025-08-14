@@ -31,6 +31,7 @@ use serde::{
 };
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     fs::{
         self,
     },
@@ -41,6 +42,7 @@ use std::{
         PathBuf,
     },
     process,
+    str::FromStr,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -126,7 +128,7 @@ impl fmt::Display for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path) -> Self {
+    pub fn read(manifest_path: &Path, impure: bool) -> Self {
         let mut manifest = (move || -> Result<Self> {
             let file = fs::File::open(manifest_path).context("Failed to open manifest")?;
             let root: Value = serde_json::from_reader(BufReader::new(&file))
@@ -151,7 +153,7 @@ impl Manifest {
             process::exit(3)
         });
 
-        if !cfg!(debug_assertions) {
+        if !cfg!(debug_assertions) && !impure {
             manifest.files.retain(|file| {
                 let absolute = file.target.is_absolute()
                     && !file.target.components().any(|x| x == Component::ParentDir)
@@ -164,6 +166,30 @@ impl Manifest {
                     );
                 }
                 absolute
+            });
+        } else if impure {
+            fn impure_replace(path: &Path, env_vars: &HashMap<String, String>) -> PathBuf {
+                let mut path_string = path.to_string_lossy().into_owned();
+
+                if path_string.starts_with('~') {
+                    path_string = path_string.replacen('~', "$HOME", 1);
+                }
+
+                #[allow(clippy::option_if_let_else)]
+                if let Ok(new_path) = subst::substitute(&path_string, env_vars) {
+                    // SAFETY: pattern is irrefutable
+                    PathBuf::from_str(&new_path).unwrap()
+                } else {
+                    error!("Failed to substitute environment variables in impure path '{path:?}'");
+                    process::exit(3);
+                }
+            }
+            let env_vars: HashMap<String, String> = std::env::vars().collect();
+            manifest.files.iter_mut().for_each(|file| {
+                if let Some(ref src) = file.source {
+                    file.source = Some(impure_replace(src, &env_vars));
+                }
+                file.target = impure_replace(&file.target, &env_vars);
             });
         }
 
@@ -268,7 +294,7 @@ impl Manifest {
                     err
                 );
             });
-            if ! res.unwrap_or(false) {
+            if !res.unwrap_or(false) {
                 self.files.push(new);
             }
         }
