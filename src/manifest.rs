@@ -30,8 +30,8 @@ use serde::{
     de::Error as serdeErr,
 };
 use serde_json::Value;
+use shellexpand::path::full as shellexpand;
 use std::{
-    collections::HashMap,
     fs::{
         self,
     },
@@ -42,7 +42,6 @@ use std::{
         PathBuf,
     },
     process,
-    str::FromStr,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -168,29 +167,20 @@ impl Manifest {
                 absolute
             });
         } else if impure {
-            fn impure_replace(path: &Path, env_vars: &HashMap<String, String>) -> PathBuf {
-                let mut path_string = path.to_string_lossy().into_owned();
-
-                if path_string.starts_with('~') {
-                    path_string = path_string.replacen('~', "$HOME", 1);
+            for file in &mut manifest.files {
+                fn expand(path_buf: &PathBuf) -> PathBuf {
+                    shellexpand(path_buf)
+                        .unwrap_or_else(|err| {
+                            error!("{err}");
+                            process::exit(4)
+                        })
+                        .to_path_buf()
                 }
-
-                #[allow(clippy::option_if_let_else)]
-                if let Ok(new_path) = subst::substitute(&path_string, env_vars) {
-                    // SAFETY: pattern is irrefutable
-                    PathBuf::from_str(&new_path).unwrap()
-                } else {
-                    error!("Failed to substitute environment variables in impure path '{path:?}'");
-                    process::exit(3);
-                }
-            }
-            let env_vars: HashMap<String, String> = std::env::vars().collect();
-            manifest.files.iter_mut().for_each(|file| {
                 if let Some(ref src) = file.source {
-                    file.source = Some(impure_replace(src, &env_vars));
+                    file.source = Some(expand(src));
                 }
-                file.target = impure_replace(&file.target, &env_vars);
-            });
+                file.target = expand(&file.target);
+            }
         }
 
         manifest
