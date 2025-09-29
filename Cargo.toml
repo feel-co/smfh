@@ -5,11 +5,11 @@ edition = "2021"
 
 [dependencies]
 blake3 = {version = "1.8.2", features = ["mmap"] }
-clap = { version = "4.5.45", features = ["derive"] }
+clap = { version = "4.5.48", features = ["derive"] }
 color-eyre = "0.6.5"
-log = "0.4.27"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.142"
+log = "0.4.28"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 shellexpand = { version = "3.1.1", features = ["full", "path"] }
 simplelog = "0.12.2"
 
