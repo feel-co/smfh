@@ -38,6 +38,13 @@ pub enum Subcommands {
         #[clap(long, short, action, default_value = ".backup-")]
         prefix: String,
 
+        #[arg(
+            long,
+            default_value = "false",
+            help = "Continue with activation if old_manifest doesn't exist"
+        )]
+        fallback: bool,
+
         #[arg()]
         manifest: PathBuf,
 
