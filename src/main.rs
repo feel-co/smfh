@@ -6,7 +6,10 @@ use args::{
     Subcommands,
 };
 use clap::Parser as _;
-use log::info;
+use log::{
+    error,
+    info,
+};
 use manifest::Manifest;
 use simplelog::{
     ColorChoice,
@@ -45,9 +48,26 @@ fn main() {
         }
         Subcommands::Diff {
             prefix,
+            fallback,
             manifest,
             old_manifest,
-        } => Manifest::read(&manifest, args.impure)
-            .diff(Manifest::read(&old_manifest, args.impure), &prefix),
+        } => {
+            let mut new = Manifest::read(&manifest, args.impure);
+            match old_manifest.try_exists() {
+                Ok(true) => new.diff(Manifest::read(&old_manifest, args.impure), &prefix),
+                Ok(false) if fallback => new.activate(&prefix),
+                Ok(false) => {
+                    error!(
+                        "Old manifest {} does not exist and `--fallback` is not set",
+                        old_manifest.display(),
+                    );
+                    std::process::exit(3);
+                }
+                Err(err) => {
+                    error!("{err}");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 }
