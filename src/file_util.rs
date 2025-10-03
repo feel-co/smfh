@@ -25,6 +25,7 @@ use std::{
     fs::{
         self,
         Metadata,
+        read_link,
     },
     io::ErrorKind,
     os::unix::fs::{
@@ -35,6 +36,7 @@ use std::{
         symlink,
     },
     path::{
+        self,
         Path,
         PathBuf,
     },
@@ -49,6 +51,7 @@ pub struct FileWithMetadata {
     pub uid: Option<u32>,
     pub gid: Option<u32>,
     pub deactivate: Option<bool>,
+    pub follow_symlinks: Option<bool>,
 
     pub metadata: Option<Metadata>,
 }
@@ -64,6 +67,7 @@ impl From<&File> for FileWithMetadata {
             uid: file.uid,
             gid: file.gid,
             deactivate: file.deactivate,
+            follow_symlinks: file.follow_symlinks,
             metadata: None,
         }
     }
@@ -216,9 +220,7 @@ impl FileWithMetadata {
                 permissions: Some(perms),
                 metadata: Some(ref metadata),
                 ..
-            }
-
-            if perms != (metadata.mode() & 0o777) => Ok(false),
+            } if perms != (metadata.mode() & 0o777) => Ok(false),
             Self {
                 uid: Some(uid),
                 metadata: Some(ref metadata),
@@ -234,13 +236,21 @@ impl FileWithMetadata {
                 kind: FileKind::Symlink,
                 ref target,
                 source: Some(ref source),
+                follow_symlinks: canonicalize,
                 ..
-                    // This will fail if target
-                    // is a dead symlink
-                    // which should only happen
-                    // if source does not exist
-                    // which should never happen
-            } => Ok(fs::canonicalize(target)? == fs::canonicalize(source)?),
+            } => {
+                // This will fail if target
+                // is a dead symlink
+                // which should only happen
+                // if source does not exist
+                // which should never happen
+                if canonicalize.unwrap_or(true) {
+                    Ok(fs::canonicalize(target)? == fs::canonicalize(source)?)
+                } else {
+                    Ok(read_link(target)? == std::path::absolute(source)?)
+                }
+            }
+
             Self {
                 kind: FileKind::Directory,
                 metadata: Some(ref metadata),
@@ -248,7 +258,7 @@ impl FileWithMetadata {
             } => Ok(metadata.is_dir()),
             Self {
                 kind: FileKind::Copy,
-            metadata: Some(ref metadata),
+                metadata: Some(ref metadata),
                 ..
             } if !metadata.is_file() => Ok(false),
             Self {
@@ -258,13 +268,13 @@ impl FileWithMetadata {
                 ..
             } => {
                 if fs::symlink_metadata(target)?.len() != fs::symlink_metadata(source)?.len() {
-                    return Ok(false)
+                    return Ok(false);
                 }
 
                 match (hash_file(target), hash_file(source)) {
-                        (Some(left), Some(right)) => Ok(left == right),
-                        _ => Ok(false)
-                    }
+                    (Some(left), Some(right)) => Ok(left == right),
+                    _ => Ok(false),
+                }
             }
             Self {
                 kind: FileKind::Modify,
@@ -390,7 +400,13 @@ impl FileWithMetadata {
                 .parent()
                 .ok_or_eyre("Failed to get parent directory")?,
         );
-        let source = fs::canonicalize(self.source.as_ref().unwrap())?;
+
+        let source = if self.follow_symlinks.unwrap_or(true) {
+            fs::canonicalize(self.source.as_ref().unwrap())?
+        } else {
+            path::absolute(self.source.as_ref().unwrap())?
+        };
+
         symlink(&source, &self.target)?;
         info!(
             "Symlinked '{}' -> '{}'",
@@ -409,7 +425,9 @@ impl FileWithMetadata {
                 .parent()
                 .ok_or_eyre("Failed to get parent directory")?,
         );
+
         let source = fs::canonicalize(self.source.as_ref().unwrap())?;
+
         fs::copy(&source, &self.target)?;
         info!(
             "Copied '{}' -> '{}'",
