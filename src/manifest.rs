@@ -73,6 +73,7 @@ pub struct File {
     pub uid: Option<u32>,
     pub gid: Option<u32>,
     pub deactivate: Option<bool>,
+    pub follow_symlinks: Option<bool>,
 }
 
 impl Ord for File {

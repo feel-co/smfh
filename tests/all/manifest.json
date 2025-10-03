@@ -6,6 +6,12 @@
       "target": "./outputs/link"
     },
     {
+      "type": "symlink",
+      "source": "./sources/link",
+      "target": "./outputs/link-to-link",
+      "follow_symlinks": false
+    },
+    {
       "type": "copy",
       "source": "./sources/file",
       "target": "./outputs/file"
