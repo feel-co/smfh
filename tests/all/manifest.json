@@ -62,6 +62,5 @@
       "target": "./outputs/delete"
     }
   ],
-  "clobber_by_default": false,
-  "version": 1
+  "version": 2
 }

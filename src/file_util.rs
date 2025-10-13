@@ -73,14 +73,14 @@ impl From<&File> for FileWithMetadata {
     }
 }
 impl FileWithMetadata {
-    pub fn activate(&mut self, clobber_by_default: bool, prefix: &str) -> Result<()> {
+    pub fn activate(&mut self, prefix: &str) -> Result<()> {
         if self.check_source() {
             return Ok(());
         }
 
         self.set_metadata()?;
 
-        let clobber = self.clobber.unwrap_or(clobber_by_default);
+        let clobber = self.clobber.unwrap();
 
         if clobber && self.metadata.is_some() && self.atomic_activate().context("(atomic)")? {
             return Ok(());
