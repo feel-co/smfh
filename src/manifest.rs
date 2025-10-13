@@ -47,6 +47,7 @@ use std::{
 #[derive(Serialize, Deserialize)]
 pub struct Manifest {
     pub files: Vec<File>,
+    pub clobber_by_default: Option<bool>,
     pub version: u16,
 }
 
@@ -189,7 +190,7 @@ impl Manifest {
         self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from) {
             _ = file
-                .activate(prefix)
+                .activate(self.clobber_by_default, prefix)
                 .inspect_err(|err| {
                     error!(
                         "Failed to activate file: '{}'\n Reason: '{}'",
@@ -240,7 +241,10 @@ impl Manifest {
         old_manifest.deactivate();
 
         for (old, new) in updated_files {
-            if !old.clobber.unwrap() {
+            if !old
+                .clobber
+                .unwrap_or_else(|| old_manifest.clobber_by_default.unwrap_or(false))
+            {
                 let mut file = FileWithMetadata::from(&old);
 
                 // Don't care if this errors

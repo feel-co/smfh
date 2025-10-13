@@ -49,7 +49,8 @@ Note: any option set to `null` here is optional
       "target": "./outputs/delete"
     }
   ],
-  "version": 2
+  "clobber_by_default": false,
+  "version": 1
 }
 
 ```
