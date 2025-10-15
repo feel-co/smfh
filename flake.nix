@@ -7,12 +7,6 @@
       repo = "nixpkgs";
       ref = "nixos-unstable";
     };
-    rust-overlay = {
-      type = "github";
-      owner = "oxalica";
-      repo = "rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     systems = {
       type = "github";
       owner = "nix-systems";
@@ -25,7 +19,6 @@
     {
       self,
       nixpkgs,
-      rust-overlay,
       systems,
     }:
     let
@@ -35,13 +28,12 @@
       formatter = eachSystem (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system}.extend rust-overlay.overlays.default;
+          pkgs = nixpkgs.legacyPackages.${system};
         in
         pkgs.writeShellApplication {
           name = "format";
           runtimeInputs = builtins.attrValues {
-            inherit (pkgs) nixfmt-rfc-style fd;
-            inherit (pkgs.rust-bin.nightly.latest) rustfmt;
+            inherit (pkgs) nixfmt-rfc-style fd rustfmt;
           };
           text = ''
             fd "$@" -t f -e nix -X nixfmt '{}'
@@ -63,14 +55,13 @@
       devShells = eachSystem (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system}.extend rust-overlay.overlays.default;
+          pkgs = nixpkgs.legacyPackages.${system};
         in
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
             packages = builtins.attrValues {
-              inherit (pkgs) rust-analyzer clippy;
-              inherit (pkgs.rust-bin.nightly.latest) rustfmt;
+              inherit (pkgs) rust-analyzer clippy rustfmt;
             };
           };
         }
