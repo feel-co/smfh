@@ -1,6 +1,7 @@
 # Sleek Manifest File Handler
 
-The goal of this project is to provide a reliable file creation tool for use with nix
+The goal of this project is to provide a reliable file creation tool for use with nix.
+We intend full forward-compatibility so that smfh can read all older manifest versions.
 
 Mainly with [hjem](https://github.com/feel-co/hjem), and possibly for creating `/etc` in [NixOS](https://github.com/NixOS/nixpkgs)
 

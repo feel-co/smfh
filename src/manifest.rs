@@ -48,7 +48,7 @@ use std::{
 pub struct Manifest {
     pub files: Vec<File>,
     pub clobber_by_default: Option<bool>,
-    pub version: u16,
+    pub version: u64,
 }
 
 fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
@@ -137,8 +137,8 @@ impl Manifest {
                 .get("version")
                 .ok_or_eyre("Failed to get version from manifest")?;
 
-            if version != VERSION {
-                error!("Program version: '{VERSION}' Manifest version: '{version}'\n Version mismatch, exiting!");
+            if version.as_u64().unwrap() > VERSION {
+                error!("Program version: '{VERSION}' Manifest version: '{version}'\n Manifest version is newer, exiting!");
                 process::exit(2)
             }
 
