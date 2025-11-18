@@ -60,6 +60,7 @@
           default = self.packages.${system}.smfh;
         }
       );
+
       devShells = eachSystem (
         system:
         let
@@ -75,5 +76,9 @@
           };
         }
       );
+
+      overlays.default = f: p: {
+          smfh = f.callPackage ./package.nix { };
+      };
     };
 }
