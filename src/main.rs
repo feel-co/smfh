@@ -64,7 +64,7 @@ fn main() {
                     std::process::exit(3);
                 }
                 Err(err) => {
-                    error!("{err}");
+                    error!("{err:?}");
                     std::process::exit(1);
                 }
             }

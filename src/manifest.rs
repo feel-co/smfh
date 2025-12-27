@@ -130,9 +130,9 @@ impl fmt::Display for FileKind {
 impl Manifest {
     pub fn read(manifest_path: &Path, impure: bool) -> Self {
         let mut manifest = (move || -> Result<Self> {
-            let file = fs::File::open(manifest_path).context("Failed to open manifest")?;
+            let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
             let root: Value = serde_json::from_reader(BufReader::new(&file))
-                .context("Failed to deserialize manifest")?;
+                .wrap_err("Failed to deserialize manifest")?;
             let version = root
                 .get("version")
                 .ok_or_eyre("Failed to get version from manifest")?;
@@ -143,13 +143,13 @@ impl Manifest {
             }
 
             let deserialized_manifest: Self =
-                serde_json::from_value(root).context("Failed to deserialize manifest")?;
+                serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
 
             info!("Deserialized manifest: '{}'", manifest_path.display());
             Ok(deserialized_manifest)
         })()
         .unwrap_or_else(|err| {
-            error!("{err}");
+            error!("{err:?}");
             process::exit(3)
         });
 
@@ -172,7 +172,7 @@ impl Manifest {
                 fn expand(path_buf: &PathBuf) -> PathBuf {
                     shellexpand(path_buf)
                         .unwrap_or_else(|err| {
-                            error!("{err}");
+                            error!("{err:?}");
                             process::exit(4)
                         })
                         .to_path_buf()
@@ -193,7 +193,7 @@ impl Manifest {
                 .activate(self.clobber_by_default, prefix)
                 .inspect_err(|err| {
                     error!(
-                        "Failed to activate file: '{}'\n Reason: '{}'",
+                        "Failed to activate file: '{}'\n{:?}",
                         file.target.display(),
                         err
                     );
@@ -206,7 +206,7 @@ impl Manifest {
         for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
             _ = file.deactivate().inspect_err(|err| {
                 error!(
-                    "Failed to deactivate file: '{}'\n Reason: '{}'",
+                    "Failed to deactivate file: '{}'\n{:?}",
                     file.target.display(),
                     err
                 );
@@ -254,11 +254,11 @@ impl Manifest {
                 if file.metadata.is_some()
                     && !file
                         .check()
-                        .inspect_err(|err| warn!("Failed to check file: '{}', assuming file is incorrect\nReason: {}", file.target.display(), err))
+                        .inspect_err(|err| warn!("Failed to check file: '{}', assuming file is incorrect\n{:?}", file.target.display(), err))
                         .unwrap_or(false)
                 {
                  if let Err(err) = prefix_move(&file.target, prefix) {
-                     warn!("Failed to backup file '{}'\nReason: {}", file.target.display(), err);
+                     warn!("Failed to backup file '{}'\n{:?}", file.target.display(), err);
                  }
                 // if file existed but was wrong,
                 // atomic action cannot be taken
@@ -274,7 +274,7 @@ impl Manifest {
 
             if let Err(err) = atomic.set_metadata() {
                 warn!(
-                    "Failed to get metadata for file '{}'\nReason: {}",
+                    "Failed to get metadata for file '{}'\n{:?}",
                     atomic.target.display(),
                     err
                 );
@@ -283,7 +283,7 @@ impl Manifest {
 
             let res = atomic.atomic_activate().inspect_err(|err| {
                 error!(
-                    "Failed to (atomic) activate file: '{}'\n Reason: '{}'",
+                    "Failed to (atomic) activate file: '{}'\n{:?}",
                     new.target.display(),
                     err
                 );

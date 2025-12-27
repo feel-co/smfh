@@ -84,7 +84,12 @@ impl FileWithMetadata {
             .clobber
             .unwrap_or_else(|| clobber_by_default.unwrap_or(false));
 
-        if clobber && self.metadata.is_some() && self.atomic_activate().context("(atomic)")? {
+        if clobber
+            && self.metadata.is_some()
+            && self
+                .atomic_activate()
+                .wrap_err("While attempting atomic activation")?
+        {
             return Ok(());
         }
 
@@ -142,6 +147,7 @@ impl FileWithMetadata {
                 let target = self.target.clone();
 
                 self.target.set_extension("smfh-temp");
+                self.set_metadata()?;
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
                     FileKind::Copy => self.copy(),
@@ -295,7 +301,7 @@ impl FileWithMetadata {
                 self.metadata = None;
                 Ok(())
             }
-            Err(err) => Err(err).context("while setting metadata"),
+            Err(err) => Err(err).wrap_err("While setting metadata"),
         }
     }
     pub fn check_source(&self) -> bool {
@@ -495,7 +501,7 @@ pub fn hash_file(filepath: &Path) -> Option<Hash> {
 
     if let Err(err) = hasher.update_mmap(filepath) {
         warn!(
-            "Failed to hash file: '{}'\nReason: '{}'",
+            "Failed to hash file: '{}'\n{:?}",
             filepath.display(),
             err
         );
