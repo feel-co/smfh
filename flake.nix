@@ -77,8 +77,8 @@
         }
       );
 
-      overlays.default = f: p: {
-        smfh = f.callPackage ./package.nix { };
+      overlays.default = final: _: {
+        smfh = final.callPackage ./package.nix { };
       };
     };
 }
