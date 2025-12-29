@@ -20,6 +20,10 @@ use manifest::{
     File,
     FileKind,
 };
+use rand::distr::{
+    Alphanumeric,
+    SampleString,
+};
 use std::{
     ffi::OsString,
     fs::{
@@ -133,6 +137,15 @@ impl FileWithMetadata {
     pub fn atomic_activate(&mut self) -> Result<bool> {
         match self.kind {
             FileKind::Symlink | FileKind::Copy => {
+                fn randomize_filename(file: &mut FileWithMetadata) -> Result<()> {
+                    let string = Alphanumeric.sample_string(&mut rand::rng(), 16);
+                    file.target.set_file_name(string);
+                    if file.target.exists() {
+                        randomize_filename(file)?;
+                    }
+                    Ok(())
+                }
+
                 let target_is_dir = self.metadata.as_ref().unwrap().is_dir();
                 let source_is_dir = fs::symlink_metadata(self.source.as_ref().unwrap())?.is_dir();
 
@@ -146,8 +159,12 @@ impl FileWithMetadata {
 
                 let target = self.target.clone();
 
-                self.target.set_extension("smfh-temp");
-                self.set_metadata()?;
+                if target.metadata().unwrap().permissions().readonly() {
+                    return Err(eyre!("target file is unwriteable"));
+                }
+
+                randomize_filename(self)?;
+
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
                     FileKind::Copy => self.copy(),

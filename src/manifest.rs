@@ -254,19 +254,29 @@ impl Manifest {
                 if file.metadata.is_some()
                     && !file
                         .check()
-                        .inspect_err(|err| warn!("Failed to check file: '{}', assuming file is incorrect\n{:?}", file.target.display(), err))
+                        .inspect_err(|err| {
+                            warn!(
+                                "Failed to check file: '{}', assuming file is incorrect\n{:?}",
+                                file.target.display(),
+                                err
+                            );
+                        })
                         .unwrap_or(false)
                 {
-                 if let Err(err) = prefix_move(&file.target, prefix) {
-                     warn!("Failed to backup file '{}'\n{:?}", file.target.display(), err);
-                 }
-                // if file existed but was wrong,
-                // atomic action cannot be taken
-                // so there's no point of forcing clobber
+                    if let Err(err) = prefix_move(&file.target, prefix) {
+                        warn!(
+                            "Failed to backup file '{}'\n{:?}",
+                            file.target.display(),
+                            err
+                        );
+                    }
+                    // if file existed but was wrong,
+                    // atomic action cannot be taken
+                    // so there's no point of forcing clobber
 
-                // except this double checks
-                 self.files.push(new.clone());
-                 continue;
+                    // except this double checks
+                    self.files.push(new.clone());
+                    continue;
                 }
             }
 
