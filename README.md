@@ -51,7 +51,7 @@ Note: any option set to `null` here is optional
     }
   ],
   "clobber_by_default": false,
-  "version": 2
+  "version": 3
 }
 
 ```

@@ -16,7 +16,7 @@ use simplelog::{
     TerminalMode,
 };
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
