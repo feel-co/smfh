@@ -77,6 +77,10 @@
         }
       );
 
+      checks = eachSystem (
+        system: nixpkgs.legacyPackages.${system}.callPackages ./tests { inherit self; }
+      );
+
       overlays.default = final: _: {
         smfh = final.callPackage ./package.nix { };
       };
