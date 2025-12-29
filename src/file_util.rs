@@ -56,6 +56,7 @@ pub struct FileWithMetadata {
     pub gid: Option<u32>,
     pub deactivate: Option<bool>,
     pub follow_symlinks: Option<bool>,
+    pub ignore_modification: Option<bool>,
 
     pub metadata: Option<Metadata>,
 }
@@ -72,6 +73,7 @@ impl From<&File> for FileWithMetadata {
             gid: file.gid,
             deactivate: file.deactivate,
             follow_symlinks: file.follow_symlinks,
+            ignore_modification: file.ignore_modification,
             metadata: None,
         }
     }
@@ -290,8 +292,13 @@ impl FileWithMetadata {
                 kind: FileKind::Copy,
                 ref target,
                 source: Some(ref source),
+                ref ignore_modification,
                 ..
             } => {
+                if ignore_modification.is_some_and(|x| x) {
+                    return Ok(true);
+                }
+
                 if fs::symlink_metadata(target)?.len() != fs::symlink_metadata(source)?.len() {
                     return Ok(false);
                 }
@@ -517,11 +524,7 @@ pub fn hash_file(filepath: &Path) -> Option<Hash> {
     let mut hasher = blake3::Hasher::new();
 
     if let Err(err) = hasher.update_mmap(filepath) {
-        warn!(
-            "Failed to hash file: '{}'\n{:?}",
-            filepath.display(),
-            err
-        );
+        warn!("Failed to hash file: '{}'\n{:?}", filepath.display(), err);
         return None;
     }
     Some(hasher.finalize())
