@@ -19,7 +19,8 @@ Note: any option set to `null` here is optional
       "permissions": null,
       "uid": null,
       "gid": null,
-      "clobber": null
+      "clobber": null.
+      "ignore_modifications": null
     },
     {
       "type": "symlink",
@@ -28,7 +29,8 @@ Note: any option set to `null` here is optional
       "permissions": null,
       "uid": null,
       "gid": null,
-      "clobber": null
+      "clobber": null,
+      "follow_symlinks": null
     },
     {
       "type": "modify",
