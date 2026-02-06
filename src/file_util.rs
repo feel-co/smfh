@@ -379,7 +379,7 @@ impl FileWithMetadata {
             self.set_metadata()?;
         }
 
-        if self.uid.is_some() || self.uid.is_some() {
+        if self.uid.is_some() || self.gid.is_some() {
             if (self.uid.is_some_and(|x| x == metadata.uid()))
                 && (self.gid.is_some_and(|x| x == metadata.gid()))
             {
