@@ -49,6 +49,8 @@ pub struct Manifest {
     pub files: Vec<File>,
     pub clobber_by_default: Option<bool>,
     pub version: u64,
+    #[serde(skip)]
+    impure: bool,
 }
 
 fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u32>, D::Error> {
@@ -74,6 +76,7 @@ pub struct File {
     pub gid: Option<u32>,
     pub deactivate: Option<bool>,
     pub follow_symlinks: Option<bool>,
+    pub ignore_modification: Option<bool>,
 }
 
 impl Ord for File {
@@ -184,6 +187,7 @@ impl Manifest {
             }
         }
 
+        manifest.impure = impure;
         manifest
     }
     pub fn activate(&mut self, prefix: &str) {
@@ -214,7 +218,26 @@ impl Manifest {
         }
     }
 
-    pub fn diff(mut self, mut old_manifest: Self, prefix: &str) {
+    pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) {
+        let mut old_manifest = match old_path.try_exists() {
+            Ok(true) => Self::read(old_path, self.impure),
+            Ok(false) if fallback => {
+                self.activate(prefix);
+                return;
+            }
+            Ok(false) => {
+                error!(
+                    "Old manifest {} does not exist and `--fallback` is not set",
+                    old_path.display(),
+                );
+                std::process::exit(3);
+            }
+            Err(err) => {
+                error!("{err:?}");
+                std::process::exit(1);
+            }
+        };
+
         let mut updated_files: Vec<(File, File)> = vec![];
         let mut same_files: Vec<File> = vec![];
 
@@ -254,19 +277,29 @@ impl Manifest {
                 if file.metadata.is_some()
                     && !file
                         .check()
-                        .inspect_err(|err| warn!("Failed to check file: '{}', assuming file is incorrect\n{:?}", file.target.display(), err))
+                        .inspect_err(|err| {
+                            warn!(
+                                "Failed to check file: '{}', assuming file is incorrect\n{:?}",
+                                file.target.display(),
+                                err
+                            );
+                        })
                         .unwrap_or(false)
                 {
-                 if let Err(err) = prefix_move(&file.target, prefix) {
-                     warn!("Failed to backup file '{}'\n{:?}", file.target.display(), err);
-                 }
-                // if file existed but was wrong,
-                // atomic action cannot be taken
-                // so there's no point of forcing clobber
+                    if let Err(err) = prefix_move(&file.target, prefix) {
+                        warn!(
+                            "Failed to backup file '{}'\n{:?}",
+                            file.target.display(),
+                            err
+                        );
+                    }
+                    // if file existed but was wrong,
+                    // atomic action cannot be taken
+                    // so there's no point of forcing clobber
 
-                // except this double checks
-                 self.files.push(new.clone());
-                 continue;
+                    // except this double checks
+                    self.files.push(new.clone());
+                    continue;
                 }
             }
 
