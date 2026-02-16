@@ -6,10 +6,7 @@ use args::{
     Subcommands,
 };
 use clap::Parser as _;
-use log::{
-    error,
-    info,
-};
+use log::info;
 use manifest::Manifest;
 use simplelog::{
     ColorChoice,
@@ -19,7 +16,7 @@ use simplelog::{
     TerminalMode,
 };
 
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 
 fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
@@ -42,7 +39,9 @@ fn main() {
 
     info!("Program version: '{VERSION}'");
     match args.sub_command {
-        Subcommands::Deactivate { manifest } => Manifest::read(&manifest, args.impure).deactivate(),
+        Subcommands::Deactivate { manifest } => {
+            Manifest::read(&manifest, args.impure).deactivate();
+        }
         Subcommands::Activate { manifest, prefix } => {
             Manifest::read(&manifest, args.impure).activate(&prefix);
         }
@@ -52,22 +51,7 @@ fn main() {
             manifest,
             old_manifest,
         } => {
-            let mut new = Manifest::read(&manifest, args.impure);
-            match old_manifest.try_exists() {
-                Ok(true) => new.diff(Manifest::read(&old_manifest, args.impure), &prefix),
-                Ok(false) if fallback => new.activate(&prefix),
-                Ok(false) => {
-                    error!(
-                        "Old manifest {} does not exist and `--fallback` is not set",
-                        old_manifest.display(),
-                    );
-                    std::process::exit(3);
-                }
-                Err(err) => {
-                    error!("{err:?}");
-                    std::process::exit(1);
-                }
-            }
+            Manifest::read(&manifest, args.impure).diff(&old_manifest, &prefix, fallback);
         }
     }
 }
