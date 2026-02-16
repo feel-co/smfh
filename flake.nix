@@ -1,12 +1,8 @@
 {
 
   inputs = {
-    nixpkgs = {
-      type = "github";
-      owner = "NixOS";
-      repo = "nixpkgs";
-      ref = "nixos-unstable";
-    };
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+
     rust-overlay = {
       type = "github";
       owner = "oxalica";
@@ -18,7 +14,6 @@
       owner = "nix-systems";
       repo = "default";
     };
-
   };
 
   outputs =
