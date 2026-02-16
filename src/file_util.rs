@@ -160,10 +160,12 @@ impl FileWithMetadata {
                 }
 
                 let target = self.target.clone();
-
-                if target.metadata().unwrap().permissions().readonly() {
-                    return Err(eyre!("target file is unwriteable"));
-                }
+                /*
+                 TODO: this doesn't work
+                 if target.metadata().unwrap().permissions().readonly() {
+                   return Err(eyre!("target file is unwriteable"));
+                 }
+                */
 
                 randomize_filename(self)?;
 
