@@ -19,7 +19,7 @@ Note: any option set to `null` here is optional
       "permissions": null,
       "uid": null,
       "gid": null,
-      "clobber": null.
+      "clobber": null,
       "ignore_modifications": null
     },
     {
