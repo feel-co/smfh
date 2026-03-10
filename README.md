@@ -19,7 +19,7 @@ Note: any option set to `null` here is optional
       "permissions": null,
       "uid": null,
       "gid": null,
-      "clobber": null.
+      "clobber": null,
       "ignore_modifications": null
     },
     {
@@ -59,14 +59,14 @@ Note: any option set to `null` here is optional
 ```
 
 With the `sources` directory containing:
-```bash
+```console
 $ eza --long --no-user --no-time --no-filesize --tree -L 2 sources
 drwxr-xr-x sources
 .rw-r--r-- └── file
 ```
 
 And the `outputs` directory looking like this before hand:
-```bash
+```console
 $ eza --long --no-user --no-time --no-filesize --tree -L 2 outputs
 drwxr-xr-x outputs
 .rw-r--r-- ├── delete
@@ -74,7 +74,7 @@ drwxr-xr-x outputs
 ```
 
 This should output:
-```bash
+```console
 $ eza --long --no-user --no-time --no-filesize --tree -L 2 outputs
 drwxr-xr-x outputs
 drwxr-xr-x ├── directory
