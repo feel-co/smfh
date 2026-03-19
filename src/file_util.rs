@@ -139,13 +139,12 @@ impl FileWithMetadata {
     pub fn atomic_activate(&mut self) -> Result<bool> {
         match self.kind {
             FileKind::Symlink | FileKind::Copy => {
-                fn randomize_filename(file: &mut FileWithMetadata) -> Result<()> {
+                fn randomize_filename(file: &mut FileWithMetadata) {
                     let string = Alphanumeric.sample_string(&mut rand::rng(), 16);
                     file.target.set_file_name(string);
                     if file.target.exists() {
-                        randomize_filename(file)?;
+                        randomize_filename(file);
                     }
-                    Ok(())
                 }
 
                 let target_is_dir = self.metadata.as_ref().unwrap().is_dir();
@@ -167,7 +166,7 @@ impl FileWithMetadata {
                  }
                 */
 
-                randomize_filename(self)?;
+                randomize_filename(self);
 
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
