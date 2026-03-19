@@ -272,7 +272,13 @@ impl Manifest {
 
                 // Don't care if this errors
                 // metadata will just be none
-                _ = file.set_metadata();
+                if let Err(err) = file.set_metadata() {
+                    warn!(
+                        "Failed to get metadata for file '{}'\n{:?}",
+                        file.target.display(),
+                        err
+                    );
+                }
 
                 if file.metadata.is_some()
                     && !file
@@ -311,6 +317,11 @@ impl Manifest {
                     atomic.target.display(),
                     err
                 );
+                continue;
+            }
+
+            if atomic.metadata.is_none() {
+                self.files.push(new);
                 continue;
             }
 
