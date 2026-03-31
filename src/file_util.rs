@@ -248,7 +248,7 @@ impl FileWithMetadata {
                 permissions: Some(perms),
                 metadata: Some(ref metadata),
                 ..
-            } if perms != (metadata.mode() & 0o777) => Ok(false),
+            } if perms != (metadata.mode() & 0o7_777) => Ok(false),
             Self {
                 uid: Some(uid),
                 metadata: Some(ref metadata),
@@ -389,7 +389,7 @@ impl FileWithMetadata {
             if let Some(x) = self.permissions {
                 let new_perms = fs::Permissions::from_mode(x);
 
-                if metadata.mode() & 0o777 == new_perms.mode() {
+                if metadata.mode() & 0o7_777 == new_perms.mode() {
                     return Ok(());
                 }
                 info!(
