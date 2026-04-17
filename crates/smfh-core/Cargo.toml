@@ -1,7 +1,7 @@
 [package]
 name = "smfh-core"
-version = "1.4.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
 blake3.workspace = true
@@ -11,6 +11,9 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 shellexpand.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
