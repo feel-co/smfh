@@ -45,6 +45,7 @@ use std::{
         PathBuf,
     },
 };
+/// A manifest [`File`] paired with its live filesystem metadata.
 pub struct FileWithMetadata {
     pub source: Option<PathBuf>,
     pub target: PathBuf,
@@ -79,6 +80,24 @@ impl From<&File> for FileWithMetadata {
     }
 }
 impl FileWithMetadata {
+    /// Activates the file at [`target`][Self::target] by performing the
+    /// operation described by [`kind`][Self::kind]. Handles clobber and
+    /// backup (via `prefix`) before writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - metadata access fails
+    /// - atomic activation fails
+    /// - existing-file removal or backup fails
+    /// - the underlying file operation (symlink, copy, directory creation,
+    ///   chmod/chown) fails
+    ///
+    /// # Panics
+    ///
+    /// Does not panic under correct use; internal guards ensure `metadata` is
+    /// `Some` before every `.unwrap()` site is reached.
     pub fn activate(&mut self, clobber_by_default: Option<bool>, prefix: &str) -> Result<()> {
         if self.check_source() {
             return Ok(());
@@ -136,6 +155,26 @@ impl FileWithMetadata {
         }
     }
 
+    /// Attempts an atomic replacement of an existing
+    /// [`Symlink`][FileKind::Symlink] or [`Copy`][FileKind::Copy] target by
+    /// writing to a random temporary name in the same directory, then
+    /// renaming into place. Returns `true` if the swap succeeded, `false` if
+    /// the kind does not support atomic replacement or the target and
+    /// source types are incompatible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - source metadata cannot be accessed
+    /// - directory listing fails
+    /// - symlink or copy creation fails
+    /// - the final rename fails
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a `Symlink` or `Copy` file with `metadata` or
+    /// `source` being `None`.
     pub fn atomic_activate(&mut self) -> Result<bool> {
         match self.kind {
             FileKind::Symlink | FileKind::Copy => {
@@ -186,6 +225,21 @@ impl FileWithMetadata {
         }
     }
 
+    /// Removes the file at [`target`][Self::target] if it still matches the
+    /// expected state. No-op for [`Delete`][FileKind::Delete] and
+    /// [`Modify`][FileKind::Modify] kinds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - the file has been modified since activation
+    /// - the target is not the expected type
+    /// - filesystem removal fails
+    ///
+    /// # Panics
+    ///
+    /// Does not panic under correct use; `metadata` is verified to be `Some`
+    /// before every `.unwrap()` site is reached.
     pub fn deactivate(&mut self) -> Result<()> {
         if !self.deactivate.unwrap_or(true) {
             return Ok(());
@@ -222,6 +276,15 @@ impl FileWithMetadata {
         }
     }
 
+    /// Returns `true` if the file at [`target`][Self::target] matches the
+    /// expected kind, permissions, ownership, and content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - a `Symlink` or `Copy` file has no `source`
+    /// - canonicalization, symlink resolution, or stat calls fail
     pub fn check(&self) -> Result<bool> {
         match *self {
             Self {
@@ -316,6 +379,14 @@ impl FileWithMetadata {
         }
     }
 
+    /// Fetches symlink metadata for [`target`][Self::target] and stores it in
+    /// [`metadata`][Self::metadata]. Sets [`metadata`][Self::metadata] to
+    /// `None` if the target does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the filesystem returns anything other than
+    /// `NotFound`. `NotFound` is silently treated as `None`.
     pub fn set_metadata(&mut self) -> Result<()> {
         match fs::symlink_metadata(&self.target) {
             Ok(metadata) => {
@@ -329,6 +400,11 @@ impl FileWithMetadata {
             Err(err) => Err(err).wrap_err("While setting metadata"),
         }
     }
+
+    /// Returns `true` if the source is absent or invalid for a
+    /// [`Copy`][FileKind::Copy] or [`Symlink`][FileKind::Symlink] file,
+    /// logging a warning. When `true`, the caller should skip activation.
+    #[must_use]
     pub fn check_source(&self) -> bool {
         match *self {
             Self {
@@ -376,6 +452,16 @@ impl FileWithMetadata {
         }
     }
 
+    /// Applies the configured [`permissions`][Self::permissions],
+    /// [`uid`][Self::uid], and [`gid`][Self::gid] to the target file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - the target does not exist
+    /// - setting permissions fails
+    /// - `chown` or `lchown` fails
     pub fn chmod_chown(&mut self) -> Result<()> {
         self.set_metadata()?;
         let Some(metadata) = self.metadata.clone() else {
@@ -427,6 +513,20 @@ impl FileWithMetadata {
         Ok(())
     }
 
+    /// Creates a symlink at [`target`][Self::target] pointing to
+    /// [`source`][Self::source], then applies permissions and ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    ///
+    /// - parent directory cannot be created
+    /// - source path cannot be canonicalized
+    /// - symlink creation fails
+    ///
+    /// # Panics
+    ///
+    /// Panics if `source` is `None`.
     pub fn symlink(&mut self) -> Result<()> {
         _ = file_util::mkdir(
             self.target
@@ -452,6 +552,19 @@ impl FileWithMetadata {
         Ok(())
     }
 
+    /// Copies [`source`][Self::source] to [`target`][Self::target], then
+    /// applies permissions and ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - parent directory cannot be created
+    /// - source path cannot be canonicalized
+    /// - file copy fails
+    ///
+    /// # Panics
+    ///
+    /// Panics if `source` is `None`.
     pub fn copy(&mut self) -> Result<()> {
         _ = file_util::mkdir(
             self.target
@@ -473,6 +586,14 @@ impl FileWithMetadata {
         Ok(())
     }
 
+    /// Creates [`target`][Self::target] as a directory, then applies
+    /// permissions and ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - directory creation fails
+    /// - permission or ownership changes fail
     pub fn directory(&mut self) -> Result<()> {
         mkdir(&self.target)?;
         self.set_metadata()?;
@@ -480,6 +601,15 @@ impl FileWithMetadata {
         Ok(())
     }
 }
+
+/// Creates `path` as a directory, including any missing parent directories.
+/// No-op if the directory already exists.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - the path exists but is not a directory
+/// - directory creation fails
 pub fn mkdir(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(_) => {
@@ -496,6 +626,15 @@ pub fn mkdir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Renames the file at `path` to a prefixed name in the same parent directory,
+/// backing it up. No-op if the path does not exist.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - the path has no filename or parent component
+/// - an existing file at the destination cannot be deleted
+/// - the rename fails
 pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
     let Ok(_) = fs::symlink_metadata(path) else {
         return Ok(());
@@ -521,6 +660,9 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
     Ok(())
 }
 
+/// Returns the BLAKE3 hash of the file at `filepath` using memory-mapped I/O,
+/// or `None` if hashing fails.
+#[must_use]
 pub fn hash_file(filepath: &Path) -> Option<Hash> {
     let mut hasher = blake3::Hasher::new();
 
@@ -531,6 +673,11 @@ pub fn hash_file(filepath: &Path) -> Option<Hash> {
     Some(hasher.finalize())
 }
 
+/// Removes the file or directory tree at `filepath`.
+///
+/// # Errors
+///
+/// Returns an error if filesystem removal fails.
 pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
     if metadata.is_dir() {
         fs::remove_dir_all(filepath)?;

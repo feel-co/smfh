@@ -17,8 +17,51 @@ use core::{
     cmp::Ordering,
     fmt::{
         self,
+        Display,
     },
 };
+
+/// Error returned by [`Manifest::read`].
+#[derive(Debug)]
+pub enum ReadError {
+    VersionTooNew { manifest: u64 },
+    ExpandFailed(color_eyre::Report),
+    Io(color_eyre::Report),
+}
+
+impl Display for ReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::VersionTooNew { manifest } => write!(
+                f,
+                "manifest version too new: program {VERSION}, manifest {manifest}"
+            ),
+            Self::ExpandFailed(e) | Self::Io(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {}
+
+/// Error returned by [`Manifest::diff`].
+#[derive(Debug)]
+pub enum DiffError {
+    OldManifestMissing,
+    OldManifestRead(ReadError),
+    Other(color_eyre::Report),
+}
+
+impl Display for DiffError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OldManifestMissing => write!(f, "old manifest does not exist"),
+            Self::OldManifestRead(e) => write!(f, "{e}"),
+            Self::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for DiffError {}
 use log::{
     error,
     info,
@@ -44,6 +87,7 @@ use std::{
     },
 };
 
+/// Deserialized representation of a smfh manifest file.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Manifest {
     pub files: Vec<File>,
@@ -63,6 +107,7 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     Ok(Some(x))
 }
 
+/// A single file entry in a [`Manifest`].
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct File {
     pub source: Option<PathBuf>,
@@ -108,6 +153,7 @@ impl PartialOrd for File {
     }
 }
 
+/// The operation smfh performs for a given [`File`].
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
@@ -131,25 +177,42 @@ impl fmt::Display for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path, impure: bool) -> Result<Self> {
-        let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
+    /// Reads and deserializes a manifest from `manifest_path`. In impure mode,
+    /// shell-expands all paths; otherwise discards any entry whose path is
+    /// not absolute.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ReadError`] if:
+    /// - [`ReadError::VersionTooNew`]: the manifest version exceeds [`VERSION`]
+    /// - [`ReadError::Io`]: the file cannot be opened or deserialized
+    /// - [`ReadError::ExpandFailed`]: shell expansion of a path fails (impure
+    ///   mode only)
+    pub fn read(manifest_path: &Path, impure: bool) -> Result<Self, ReadError> {
+        let file = fs::File::open(manifest_path)
+            .wrap_err("Failed to open manifest")
+            .map_err(ReadError::Io)?;
         let root: Value = serde_json::from_reader(BufReader::new(&file))
-            .wrap_err("Failed to deserialize manifest")?;
+            .wrap_err("Failed to deserialize manifest")
+            .map_err(ReadError::Io)?;
         let version = root
             .get("version")
-            .ok_or_eyre("Failed to get version from manifest")?;
+            .ok_or_eyre("Failed to get version from manifest")
+            .map_err(ReadError::Io)?;
 
-        if version.as_u64().unwrap() > VERSION {
-            error!(
-                "Program version: '{VERSION}' Manifest version: '{version}'\n Manifest version is newer, exiting!"
-            );
-            return Err(eyre!(
-                "manifest version too new: program {VERSION}, manifest {version}"
-            ));
+        let manifest_version = version
+            .as_u64()
+            .ok_or_else(|| ReadError::Io(eyre!("manifest version is not a valid integer")))?;
+
+        if manifest_version > VERSION {
+            return Err(ReadError::VersionTooNew {
+                manifest: manifest_version,
+            });
         }
 
-        let mut manifest: Self =
-            serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
+        let mut manifest: Self = serde_json::from_value(root)
+            .wrap_err("Failed to deserialize manifest")
+            .map_err(ReadError::Io)?;
 
         info!("Deserialized manifest: '{}'", manifest_path.display());
 
@@ -175,9 +238,9 @@ impl Manifest {
             }
             for file in &mut manifest.files {
                 if let Some(ref src) = file.source.clone() {
-                    file.source = Some(expand(src)?);
+                    file.source = Some(expand(src).map_err(ReadError::ExpandFailed)?);
                 }
-                file.target = expand(&file.target.clone())?;
+                file.target = expand(&file.target.clone()).map_err(ReadError::ExpandFailed)?;
             }
         }
 
@@ -185,6 +248,8 @@ impl Manifest {
         Ok(manifest)
     }
 
+    /// Activates every file in the manifest, applying them to the filesystem in
+    /// dependency order.
     pub fn activate(&mut self, prefix: &str) {
         self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from) {
@@ -200,6 +265,8 @@ impl Manifest {
         }
     }
 
+    /// Removes every file in the manifest from the filesystem in reverse
+    /// dependency order.
     pub fn deactivate(&mut self) {
         self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
@@ -213,22 +280,29 @@ impl Manifest {
         }
     }
 
-    pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<()> {
+    /// Brings the filesystem from the state described by the manifest at
+    /// `old_path` to the state described by `self`. Files removed from the
+    /// new manifest are deactivated; files added or updated are
+    /// (re-)activated. If `fallback` is `true` and no old manifest exists,
+    /// falls back to a full activation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`DiffError`] if:
+    /// - [`DiffError::OldManifestMissing`]: the old manifest does not exist and
+    ///   `fallback` is `false`
+    /// - [`DiffError::OldManifestRead`]: the old manifest exists but cannot be
+    ///   read
+    /// - [`DiffError::Other`]: probing the old manifest path fails
+    pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<(), DiffError> {
         let mut old_manifest = match old_path.try_exists() {
-            Ok(true) => Self::read(old_path, self.impure)?,
+            Ok(true) => Self::read(old_path, self.impure).map_err(DiffError::OldManifestRead)?,
             Ok(false) if fallback => {
                 self.activate(prefix);
                 return Ok(());
             }
-            Ok(false) => {
-                return Err(eyre!(
-                    "Old manifest {} does not exist and `--fallback` is not set",
-                    old_path.display(),
-                ));
-            }
-            Err(err) => {
-                return Err(err).wrap_err("Failed to check old manifest existence");
-            }
+            Ok(false) => return Err(DiffError::OldManifestMissing),
+            Err(err) => return Err(DiffError::Other(color_eyre::Report::from(err))),
         };
 
         let mut updated_files: Vec<(File, File)> = vec![];
@@ -371,8 +445,10 @@ mod tests {
     #[test]
     fn read_rejects_future_version() {
         let f = write_manifest(r#"{"files":[],"version":9999}"#);
-        let err = Manifest::read(f.path(), false).unwrap_err();
-        assert!(err.to_string().contains("manifest version too new"));
+        assert!(matches!(
+            Manifest::read(f.path(), false),
+            Err(ReadError::VersionTooNew { manifest: 9999 })
+        ));
     }
 
     #[test]
