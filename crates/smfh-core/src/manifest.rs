@@ -44,7 +44,7 @@ use std::{
     },
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Manifest {
     pub files: Vec<File>,
     pub clobber_by_default: Option<bool>,
@@ -336,5 +336,89 @@ impl Manifest {
         // Activate new files
         self.activate(prefix);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::Write as _,
+        path::PathBuf,
+    };
+
+    fn file(kind: FileKind, target: &str) -> File {
+        File {
+            source: None,
+            target: PathBuf::from(target),
+            kind,
+            clobber: None,
+            permissions: None,
+            uid: None,
+            gid: None,
+            deactivate: None,
+            follow_symlinks: None,
+            ignore_modification: None,
+        }
+    }
+
+    fn write_manifest(content: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{content}").unwrap();
+        f
+    }
+
+    #[test]
+    fn read_rejects_future_version() {
+        let f = write_manifest(r#"{"files":[],"version":9999}"#);
+        let err = Manifest::read(f.path(), false).unwrap_err();
+        assert!(err.to_string().contains("manifest version too new"));
+    }
+
+    #[test]
+    fn read_valid_empty_manifest() {
+        let f = write_manifest(r#"{"files":[],"version":3}"#);
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert!(m.files.is_empty());
+        assert_eq!(m.version, 3);
+    }
+
+    #[test]
+    fn read_parses_octal_permissions() {
+        let f = write_manifest(
+            r#"{"files":[{"type":"directory","target":"/tmp/x","permissions":"755"}],"version":3}"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(m.files[0].permissions, Some(0o755));
+    }
+
+    #[test]
+    fn read_null_permissions_is_none() {
+        let f = write_manifest(
+            r#"{"files":[{"type":"directory","target":"/tmp/x","permissions":null}],"version":3}"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(m.files[0].permissions, None);
+    }
+
+    #[test]
+    fn file_ordering_by_kind() {
+        let dir = file(FileKind::Directory, "/a");
+        let copy = file(FileKind::Copy, "/a");
+        let sym = file(FileKind::Symlink, "/a");
+        let modify = file(FileKind::Modify, "/a");
+        let del = file(FileKind::Delete, "/a");
+
+        assert!(dir < copy);
+        assert!(copy < sym);
+        assert!(sym < modify);
+        assert!(modify < del);
+    }
+
+    #[test]
+    fn file_ordering_same_kind_by_depth() {
+        let shallow = file(FileKind::Copy, "/a/b");
+        let deep = file(FileKind::Copy, "/a/b/c");
+        assert!(shallow < deep);
     }
 }

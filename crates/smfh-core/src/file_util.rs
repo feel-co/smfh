@@ -540,3 +540,83 @@ pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
     info!("Deleted '{}'", filepath.display());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::FileKind;
+
+    fn fwm(kind: FileKind, target: PathBuf, source: Option<PathBuf>) -> FileWithMetadata {
+        FileWithMetadata {
+            source,
+            target,
+            kind,
+            clobber: None,
+            permissions: None,
+            uid: None,
+            gid: None,
+            deactivate: None,
+            follow_symlinks: None,
+            ignore_modification: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn check_no_metadata_delete_returns_true() {
+        assert!(
+            fwm(FileKind::Delete, PathBuf::from("/x"), None)
+                .check()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn check_no_metadata_non_delete_returns_false() {
+        assert!(
+            !fwm(FileKind::Copy, PathBuf::from("/x"), None)
+                .check()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn check_metadata_present_delete_returns_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        fs::write(&path, b"").unwrap();
+        let mut f = fwm(FileKind::Delete, path, None);
+        f.set_metadata().unwrap();
+        assert!(!f.check().unwrap());
+    }
+
+    #[test]
+    fn mkdir_existing_directory_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        mkdir(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn mkdir_file_in_way_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        fs::write(&path, b"").unwrap();
+        assert!(mkdir(&path).is_err());
+    }
+
+    #[test]
+    fn prefix_move_renames_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        fs::write(&path, b"").unwrap();
+        prefix_move(&path, ".bak-").unwrap();
+        assert!(!path.exists());
+        assert!(dir.path().join(".bak-file").exists());
+    }
+
+    #[test]
+    fn prefix_move_nonexistent_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        prefix_move(&dir.path().join("nonexistent"), ".bak-").unwrap();
+    }
+}
