@@ -1,16 +1,16 @@
 { lib, rustPlatform }:
 let
-  toml = (lib.importTOML ./Cargo.toml).package;
+  toml = (lib.importTOML ./crates/smfh-cli/Cargo.toml).package;
   fs = lib.fileset;
   s = ./.;
 in
 rustPlatform.buildRustPackage {
-  pname = toml.name;
+  pname = "smfh";
   inherit (toml) version;
   src = fs.toSource {
     root = s;
     fileset = fs.unions [
-      (s + /src)
+      (s + /crates)
       (s + /tests)
       (s + /Cargo.lock)
       (s + /Cargo.toml)

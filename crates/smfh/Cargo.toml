@@ -1,0 +1,10 @@
+[package]
+name = "smfh"
+version = "1.4.0"
+edition = "2021"
+
+[dependencies]
+smfh-core.workspace = true
+
+[lints]
+workspace = true

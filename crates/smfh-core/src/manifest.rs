@@ -10,6 +10,7 @@ use color_eyre::{
     eyre::{
         Context as _,
         OptionExt as _,
+        eyre,
     },
 };
 use core::{
@@ -41,7 +42,6 @@ use std::{
         Path,
         PathBuf,
     },
-    process,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -131,30 +131,27 @@ impl fmt::Display for FileKind {
 }
 
 impl Manifest {
-    pub fn read(manifest_path: &Path, impure: bool) -> Self {
-        let mut manifest = (move || -> Result<Self> {
-            let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
-            let root: Value = serde_json::from_reader(BufReader::new(&file))
-                .wrap_err("Failed to deserialize manifest")?;
-            let version = root
-                .get("version")
-                .ok_or_eyre("Failed to get version from manifest")?;
+    pub fn read(manifest_path: &Path, impure: bool) -> Result<Self> {
+        let file = fs::File::open(manifest_path).wrap_err("Failed to open manifest")?;
+        let root: Value = serde_json::from_reader(BufReader::new(&file))
+            .wrap_err("Failed to deserialize manifest")?;
+        let version = root
+            .get("version")
+            .ok_or_eyre("Failed to get version from manifest")?;
 
-            if version.as_u64().unwrap() > VERSION {
-                error!("Program version: '{VERSION}' Manifest version: '{version}'\n Manifest version is newer, exiting!");
-                process::exit(2)
-            }
+        if version.as_u64().unwrap() > VERSION {
+            error!(
+                "Program version: '{VERSION}' Manifest version: '{version}'\n Manifest version is newer, exiting!"
+            );
+            return Err(eyre!(
+                "manifest version too new: program {VERSION}, manifest {version}"
+            ));
+        }
 
-            let deserialized_manifest: Self =
-                serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
+        let mut manifest: Self =
+            serde_json::from_value(root).wrap_err("Failed to deserialize manifest")?;
 
-            info!("Deserialized manifest: '{}'", manifest_path.display());
-            Ok(deserialized_manifest)
-        })()
-        .unwrap_or_else(|err| {
-            error!("{err:?}");
-            process::exit(3)
-        });
+        info!("Deserialized manifest: '{}'", manifest_path.display());
 
         if !cfg!(debug_assertions) && !impure {
             manifest.files.retain(|file| {
@@ -171,25 +168,23 @@ impl Manifest {
                 absolute
             });
         } else if impure {
+            fn expand(path_buf: &PathBuf) -> Result<PathBuf> {
+                Ok(shellexpand(path_buf)
+                    .map_err(|err| eyre!("{err:?}"))?
+                    .to_path_buf())
+            }
             for file in &mut manifest.files {
-                fn expand(path_buf: &PathBuf) -> PathBuf {
-                    shellexpand(path_buf)
-                        .unwrap_or_else(|err| {
-                            error!("{err:?}");
-                            process::exit(4)
-                        })
-                        .to_path_buf()
+                if let Some(ref src) = file.source.clone() {
+                    file.source = Some(expand(src)?);
                 }
-                if let Some(ref src) = file.source {
-                    file.source = Some(expand(src));
-                }
-                file.target = expand(&file.target);
+                file.target = expand(&file.target.clone())?;
             }
         }
 
         manifest.impure = impure;
-        manifest
+        Ok(manifest)
     }
+
     pub fn activate(&mut self, prefix: &str) {
         self.files.sort();
         for mut file in self.files.iter().map(FileWithMetadata::from) {
@@ -218,23 +213,21 @@ impl Manifest {
         }
     }
 
-    pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) {
+    pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<()> {
         let mut old_manifest = match old_path.try_exists() {
-            Ok(true) => Self::read(old_path, self.impure),
+            Ok(true) => Self::read(old_path, self.impure)?,
             Ok(false) if fallback => {
                 self.activate(prefix);
-                return;
+                return Ok(());
             }
             Ok(false) => {
-                error!(
+                return Err(eyre!(
                     "Old manifest {} does not exist and `--fallback` is not set",
                     old_path.display(),
-                );
-                std::process::exit(3);
+                ));
             }
             Err(err) => {
-                error!("{err:?}");
-                std::process::exit(1);
+                return Err(err).wrap_err("Failed to check old manifest existence");
             }
         };
 
@@ -342,5 +335,6 @@ impl Manifest {
         self.files.append(&mut same_files);
         // Activate new files
         self.activate(prefix);
+        Ok(())
     }
 }

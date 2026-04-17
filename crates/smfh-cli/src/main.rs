@@ -1,13 +1,14 @@
 mod args;
-mod file_util;
-mod manifest;
+
 use args::{
     Args,
     Subcommands,
 };
 use clap::Parser as _;
-use log::info;
-use manifest::Manifest;
+use log::{
+    error,
+    info,
+};
 use simplelog::{
     ColorChoice,
     Config,
@@ -15,8 +16,11 @@ use simplelog::{
     TermLogger,
     TerminalMode,
 };
-
-pub const VERSION: u64 = 3;
+use smfh_core::{
+    VERSION,
+    manifest::Manifest,
+};
+use std::process;
 
 fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
@@ -38,20 +42,25 @@ fn main() {
     .expect("Failed to initialize logger");
 
     info!("Program version: '{VERSION}'");
-    match args.sub_command {
+
+    let result = match args.sub_command {
         Subcommands::Deactivate { manifest } => {
-            Manifest::read(&manifest, args.impure).deactivate();
+            Manifest::read(&manifest, args.impure).map(|mut m| m.deactivate())
         }
         Subcommands::Activate { manifest, prefix } => {
-            Manifest::read(&manifest, args.impure).activate(&prefix);
+            Manifest::read(&manifest, args.impure).map(|mut m| m.activate(&prefix))
         }
         Subcommands::Diff {
             prefix,
             fallback,
             manifest,
             old_manifest,
-        } => {
-            Manifest::read(&manifest, args.impure).diff(&old_manifest, &prefix, fallback);
-        }
+        } => Manifest::read(&manifest, args.impure)
+            .and_then(|m| m.diff(&old_manifest, &prefix, fallback)),
+    };
+
+    if let Err(err) = result {
+        error!("{err:?}");
+        process::exit(1);
     }
 }

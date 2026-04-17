@@ -1,0 +1,18 @@
+[package]
+name = "smfh-cli"
+version = "1.4.0"
+edition = "2021"
+
+[[bin]]
+name = "smfh"
+path = "src/main.rs"
+
+[dependencies]
+smfh-core.workspace = true
+clap.workspace = true
+color-eyre.workspace = true
+log.workspace = true
+simplelog.workspace = true
+
+[lints]
+workspace = true
