@@ -1,5 +1,4 @@
 {
-
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
 
@@ -65,7 +64,7 @@
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
             packages = builtins.attrValues {
-              inherit (pkgs) rust-analyzer clippy;
+              inherit (pkgs) rust-analyzer clippy cargo-nextest;
               inherit (pkgs.rust-bin.nightly.latest) rustfmt;
             };
           };
