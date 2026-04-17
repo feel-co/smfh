@@ -1,6 +1,9 @@
-{ lib, rustPlatform }:
+{
+  lib,
+  rustPlatform,
+}:
 let
-  toml = (lib.importTOML ./crates/smfh-cli/Cargo.toml).package;
+  toml = (lib.importTOML ./Cargo.toml).workspace.package;
   fs = lib.fileset;
   s = ./.;
 in
