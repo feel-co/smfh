@@ -1,3 +1,0 @@
-avoid-breaking-exported-api = false
-
-allowed-idents-below-min-chars = [ "e", "i", "x", "f"]
