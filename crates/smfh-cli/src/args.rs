@@ -51,4 +51,8 @@ pub enum Subcommands {
         #[arg()]
         old_manifest: PathBuf,
     },
+    Verify {
+        #[arg()]
+        manifest: PathBuf,
+    },
 }

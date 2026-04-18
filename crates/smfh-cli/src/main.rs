@@ -108,5 +108,16 @@ fn main() {
                 }
             }
         }
+        Subcommands::Verify { manifest } => {
+            let m = read_or_exit(&manifest, args.impure);
+            let errors = m.verify();
+            if !errors.is_empty() {
+                for e in &errors {
+                    error!("{e}");
+                }
+                process::exit(3);
+            }
+            info!("Manifest '{}' is valid", manifest.display());
+        }
     }
 }
