@@ -62,6 +62,43 @@ impl Display for DiffError {
 }
 
 impl std::error::Error for DiffError {}
+
+/// A single validation violation found by [`Manifest::verify`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Violation {
+    MissingSource,
+    UnexpectedSource,
+    UnexpectedFollowSymlinks,
+    UnexpectedIgnoreModification,
+}
+
+/// Error returned by [`Manifest::verify`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyError {
+    pub target: PathBuf,
+    pub kind: FileKind,
+    pub violation: Violation,
+}
+
+impl Display for VerifyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let msg = match self.violation {
+            Violation::MissingSource => "requires a source",
+            Violation::UnexpectedSource => "should not have a source",
+            Violation::UnexpectedFollowSymlinks => "should not have follow_symlinks",
+            Violation::UnexpectedIgnoreModification => "should not have ignore_modification",
+        };
+        write!(
+            f,
+            "file '{}' of type '{}' {msg}",
+            self.target.display(),
+            self.kind
+        )
+    }
+}
+
+impl std::error::Error for VerifyError {}
+
 use log::{
     error,
     info,
@@ -246,6 +283,63 @@ impl Manifest {
 
         manifest.impure = impure;
         Ok(manifest)
+    }
+
+    /// Verifies that every file entry complies with the manifest spec.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`VerifyError`] if:
+    ///
+    /// - [`VerifyError::MissingSource`]: a `Copy` or `Symlink` file has no
+    ///   `source`
+    /// - [`VerifyError::UnexpectedSource`]: a `Delete`, `Directory`, or
+    ///   `Modify` file has a `source`
+    /// - [`VerifyError::UnexpectedFollowSymlinks`]: a non-`Symlink` file has
+    ///   `follow_symlinks` set
+    /// - [`VerifyError::UnexpectedIgnoreModification`]: a non-`Copy` file has
+    ///   `ignore_modification` set
+    #[must_use]
+    pub fn verify(&self) -> Vec<VerifyError> {
+        let mut errors = Vec::new();
+        for file in &self.files {
+            match file.kind {
+                FileKind::Copy | FileKind::Symlink if file.source.is_none() => {
+                    errors.push(VerifyError {
+                        target: file.target.clone(),
+                        kind: file.kind,
+                        violation: Violation::MissingSource,
+                    });
+                }
+                FileKind::Delete | FileKind::Directory | FileKind::Modify
+                    if file.source.is_some() =>
+                {
+                    errors.push(VerifyError {
+                        target: file.target.clone(),
+                        kind: file.kind,
+                        violation: Violation::UnexpectedSource,
+                    });
+                }
+                _ => {}
+            }
+
+            if file.follow_symlinks.is_some() && file.kind != FileKind::Symlink {
+                errors.push(VerifyError {
+                    target: file.target.clone(),
+                    kind: file.kind,
+                    violation: Violation::UnexpectedFollowSymlinks,
+                });
+            }
+
+            if file.ignore_modification.is_some() && file.kind != FileKind::Copy {
+                errors.push(VerifyError {
+                    target: file.target.clone(),
+                    kind: file.kind,
+                    violation: Violation::UnexpectedIgnoreModification,
+                });
+            }
+        }
+        errors
     }
 
     /// Activates every file in the manifest, applying them to the filesystem in
@@ -496,5 +590,131 @@ mod tests {
         let shallow = file(FileKind::Copy, "/a/b");
         let deep = file(FileKind::Copy, "/a/b/c");
         assert!(shallow < deep);
+    }
+
+    fn manifest_with(files: Vec<File>) -> Manifest {
+        Manifest {
+            files,
+            clobber_by_default: None,
+            version: 3,
+            impure: false,
+        }
+    }
+
+    #[test]
+    fn verify_rejects_missing_source_for_copy() {
+        let errors = manifest_with(vec![file(FileKind::Copy, "/a")]).verify();
+        assert_eq!(
+            errors,
+            vec![VerifyError {
+                target: PathBuf::from("/a"),
+                kind: FileKind::Copy,
+                violation: Violation::MissingSource,
+            }]
+        );
+    }
+
+    #[test]
+    fn verify_rejects_missing_source_for_symlink() {
+        let errors = manifest_with(vec![file(FileKind::Symlink, "/a")]).verify();
+        assert_eq!(
+            errors,
+            vec![VerifyError {
+                target: PathBuf::from("/a"),
+                kind: FileKind::Symlink,
+                violation: Violation::MissingSource,
+            }]
+        );
+    }
+
+    #[test]
+    fn verify_rejects_unexpected_source_for_delete() {
+        let mut f = file(FileKind::Delete, "/a");
+        f.source = Some(PathBuf::from("/b"));
+        let errors = manifest_with(vec![f]).verify();
+        assert_eq!(
+            errors,
+            vec![VerifyError {
+                target: PathBuf::from("/a"),
+                kind: FileKind::Delete,
+                violation: Violation::UnexpectedSource,
+            }]
+        );
+    }
+
+    #[test]
+    fn verify_rejects_unexpected_follow_symlinks_for_copy() {
+        let mut f = file(FileKind::Copy, "/a");
+        f.source = Some(PathBuf::from("/b"));
+        f.follow_symlinks = Some(true);
+        let errors = manifest_with(vec![f]).verify();
+        assert_eq!(
+            errors,
+            vec![VerifyError {
+                target: PathBuf::from("/a"),
+                kind: FileKind::Copy,
+                violation: Violation::UnexpectedFollowSymlinks,
+            }]
+        );
+    }
+
+    #[test]
+    fn verify_rejects_unexpected_ignore_modification_for_symlink() {
+        let mut f = file(FileKind::Symlink, "/a");
+        f.source = Some(PathBuf::from("/b"));
+        f.ignore_modification = Some(true);
+        let errors = manifest_with(vec![f]).verify();
+        assert_eq!(
+            errors,
+            vec![VerifyError {
+                target: PathBuf::from("/a"),
+                kind: FileKind::Symlink,
+                violation: Violation::UnexpectedIgnoreModification,
+            }]
+        );
+    }
+
+    #[test]
+    fn verify_accepts_valid_manifest() {
+        let mut copy = file(FileKind::Copy, "/a");
+        copy.source = Some(PathBuf::from("/b"));
+        let mut symlink = file(FileKind::Symlink, "/c");
+        symlink.source = Some(PathBuf::from("/d"));
+        assert!(
+            manifest_with(vec![copy, symlink, file(FileKind::Delete, "/e")])
+                .verify()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn verify_reports_all_errors() {
+        let mut copy = file(FileKind::Copy, "/a");
+        copy.follow_symlinks = Some(true);
+        let symlink = file(FileKind::Symlink, "/b");
+        let mut delete = file(FileKind::Delete, "/c");
+        delete.source = Some(PathBuf::from("/d"));
+        let errors = manifest_with(vec![copy, symlink, delete]).verify();
+        assert_eq!(errors.len(), 4);
+        assert!(errors.contains(&VerifyError {
+            target: PathBuf::from("/a"),
+            kind: FileKind::Copy,
+            violation: Violation::MissingSource,
+        }));
+        assert!(errors.contains(&VerifyError {
+            target: PathBuf::from("/a"),
+            kind: FileKind::Copy,
+            violation: Violation::UnexpectedFollowSymlinks,
+        }));
+        assert!(errors.contains(&VerifyError {
+            target: PathBuf::from("/b"),
+            kind: FileKind::Symlink,
+            violation: Violation::MissingSource,
+        }));
+        assert!(errors.contains(&VerifyError {
+            target: PathBuf::from("/c"),
+            kind: FileKind::Delete,
+            violation: Violation::UnexpectedSource,
+        }));
     }
 }
