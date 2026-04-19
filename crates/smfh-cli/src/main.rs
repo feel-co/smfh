@@ -54,6 +54,17 @@ fn read_or_exit(path: &Path, impure: bool) -> Manifest {
         Err(e) => handle_read_error(e),
     }
 }
+fn verify(manifest: &Path, impure: bool) -> smfh_core::manifest::Manifest {
+    let m = read_or_exit(manifest, impure);
+    let errors = m.verify();
+    if !errors.is_empty() {
+        for e in &errors {
+            error!("{e}");
+        }
+        process::exit(3);
+    }
+    m
+}
 
 fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
@@ -109,15 +120,18 @@ fn main() {
             }
         }
         Subcommands::Verify { manifest } => {
-            let m = read_or_exit(&manifest, args.impure);
-            let errors = m.verify();
-            if !errors.is_empty() {
-                for e in &errors {
-                    error!("{e}");
-                }
-                process::exit(3);
-            }
+            _ = verify(&manifest, args.impure);
             info!("Manifest '{}' is valid", manifest.display());
+        }
+        Subcommands::Clean { manifest } => {
+            let m = verify(&manifest, args.impure);
+            match serde_json::to_string_pretty(&m) {
+                Ok(s) => println!("{s}"),
+                Err(e) => {
+                    error!("{e:?}");
+                    process::exit(1);
+                }
+            }
         }
     }
 }
