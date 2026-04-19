@@ -124,10 +124,20 @@ use std::{
     },
 };
 
+#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+fn is_false(t: &Option<bool>) -> bool {
+    t.is_none_or(|x| !x)
+}
+#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+fn is_true(t: &Option<bool>) -> bool {
+    t.is_none_or(|x| x)
+}
+
 /// Deserialized representation of a smfh manifest file.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Manifest {
     pub files: Vec<File>,
+    #[serde(skip_serializing_if = "is_false")]
     pub clobber_by_default: Option<bool>,
     pub version: u64,
     #[serde(skip)]
@@ -147,17 +157,28 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
 /// A single file entry in a [`Manifest`].
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct File {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<PathBuf>,
     pub target: PathBuf,
     #[serde(rename = "type")]
     pub kind: FileKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub clobber: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_octal")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_octal",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub permissions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gid: Option<u32>,
+    #[serde(skip_serializing_if = "is_true")]
     pub deactivate: Option<bool>,
+    #[serde(skip_serializing_if = "is_true")]
     pub follow_symlinks: Option<bool>,
+    #[serde(skip_serializing_if = "is_false")]
     pub ignore_modification: Option<bool>,
 }
 

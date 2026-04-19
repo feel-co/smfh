@@ -55,4 +55,8 @@ pub enum Subcommands {
         #[arg()]
         manifest: PathBuf,
     },
+    Clean {
+        #[arg()]
+        manifest: PathBuf,
+    },
 }

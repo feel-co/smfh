@@ -728,6 +728,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "log",
+ "serde_json",
  "simplelog",
  "smfh-core",
 ]
