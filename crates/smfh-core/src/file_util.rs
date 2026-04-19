@@ -12,7 +12,6 @@ use color_eyre::{
     },
 };
 use log::{
-    debug,
     info,
     warn,
 };
@@ -620,7 +619,7 @@ pub fn mkdir(path: &Path) -> Result<()> {
             if !x.is_dir() {
                 return Err(eyre!("File in way of '{}'", path.display()));
             }
-            debug!("Directory '{}' already exists", path.display());
+            info!("Directory '{}' already exists", path.display());
         }
     }
     Ok(())
