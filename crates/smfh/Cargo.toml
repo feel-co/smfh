@@ -2,11 +2,12 @@
 name = "smfh"
 version.workspace = true
 edition.workspace = true
-description = "Sleek Manifest File Handler"
-license = "AGPL-3.0-only"
-repository = "https://github.com/feel-co/smfh"
+description.workspace = true
+license.workspace = true
+repository.workspace = true
 keywords = ["manifest", "atomic", "symlink"]
-categories = ["command-line-utilities"]
+categories = ["command-line-utilities", "filesystem"]
+readme = "../../README.md"
 
 [dependencies]
 smfh-core.workspace = true

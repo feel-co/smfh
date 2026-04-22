@@ -3,12 +3,12 @@ name = "smfh-core"
 version.workspace = true
 edition.workspace = true
 description = "Core library for the Sleek Manifest File Handler"
-license = "AGPL-3.0-only"
-repository = "https://github.com/feel-co/smfh"
+license.workspace = true
+repository.workspace = true
 publish = true
 readme = "../../README.md"
 keywords = ["manifest", "atomic", "symlink"]
-categories = ["config"]
+categories = ["filesystem"]
 
 [dependencies]
 blake3.workspace = true
