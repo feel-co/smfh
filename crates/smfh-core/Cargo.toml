@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Core library for the Sleek Manifest File Handler"
 license = "AGPL-3.0-only"
 repository = "https://github.com/feel-co/smfh"
+publish = true
+readme = "../../README.md"
+keywords = ["manifest", "atomic", "symlink"]
+categories = ["Libraries", "Configuration"]
 
 [dependencies]
 blake3.workspace = true
