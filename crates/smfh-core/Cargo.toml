@@ -8,7 +8,7 @@ repository = "https://github.com/feel-co/smfh"
 publish = true
 readme = "../../README.md"
 keywords = ["manifest", "atomic", "symlink"]
-categories = ["Libraries", "Configuration"]
+categories = ["config"]
 
 [dependencies]
 blake3.workspace = true
