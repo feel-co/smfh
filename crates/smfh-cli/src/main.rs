@@ -89,10 +89,22 @@ fn main() {
 
     match args.sub_command {
         Subcommands::Deactivate { manifest } => {
-            read_or_exit(&manifest, args.impure).deactivate();
+            let failures = read_or_exit(&manifest, args.impure).deactivate();
+            if !failures.is_empty() {
+                for (path, err) in &failures {
+                    error!("Failed to deactivate {}: {err:?}", path.display());
+                }
+                process::exit(1);
+            }
         }
         Subcommands::Activate { manifest, prefix } => {
-            read_or_exit(&manifest, args.impure).activate(&prefix);
+            let failures = read_or_exit(&manifest, args.impure).activate(&prefix);
+            if !failures.is_empty() {
+                for (path, err) in &failures {
+                    error!("Failed to activate {}: {err:?}", path.display());
+                }
+                process::exit(1);
+            }
         }
         Subcommands::Diff {
             prefix,
@@ -112,6 +124,12 @@ fn main() {
                         process::exit(3);
                     }
                     DiffError::OldManifestRead(e) => handle_read_error(e),
+                    DiffError::ActivationFailed(failures) => {
+                        for (path, err) in &failures {
+                            error!("Failed to activate {}: {err}", path.display());
+                        }
+                        process::exit(1);
+                    }
                     DiffError::Other(e) => {
                         error!("{e:?}");
                         process::exit(1);
