@@ -197,26 +197,26 @@ impl FileWithMetadata {
                 }
 
                 let target = self.target.clone();
-                /*
-                 TODO: this doesn't work
-                 if target.metadata().unwrap().permissions().readonly() {
-                   return Err(eyre!("target file is unwriteable"));
-                 }
-                */
 
                 randomize_filename(self);
+                let temp_path = self.target.clone();
 
                 match self.kind {
                     FileKind::Symlink => self.symlink(),
                     FileKind::Copy => self.copy(),
                     _ => panic!("This should never happen"),
-                }?;
-                info!(
-                    "Renaming '{}' -> '{}'",
-                    &self.target.display(),
-                    target.display()
-                );
-                fs::rename(&self.target, target)?;
+                }
+                .and_then(|_| {
+                    info!(
+                        "Renaming '{}' -> '{}'",
+                        temp_path.display(),
+                        target.display()
+                    );
+                    fs::rename(&temp_path, &target).map_err(Into::into)
+                })
+                .inspect_err(|_| {
+                    let _ = fs::remove_file(&temp_path);
+                })?;
 
                 Ok(true)
             }

@@ -48,6 +48,10 @@ impl std::error::Error for ReadError {}
 pub enum DiffError {
     OldManifestMissing,
     OldManifestRead(ReadError),
+    /// One or more files failed to activate or deactivate. Each entry is the
+    /// target path and the formatted error. Returned instead of `Ok(())` so
+    /// the manifest rename is skipped and the next run can retry.
+    ActivationFailed(Vec<(PathBuf, String)>),
     Other(color_eyre::Report),
 }
 
@@ -56,6 +60,17 @@ impl Display for DiffError {
         match self {
             Self::OldManifestMissing => write!(f, "old manifest does not exist"),
             Self::OldManifestRead(e) => write!(f, "{e}"),
+            Self::ActivationFailed(failures) => {
+                write!(
+                    f,
+                    "{} file(s) failed to activate/deactivate:",
+                    failures.len()
+                )?;
+                for (path, err) in failures {
+                    write!(f, "\n  {}: {err}", path.display())?;
+                }
+                Ok(())
+            }
             Self::Other(e) => write!(f, "{e}"),
         }
     }
@@ -364,35 +379,41 @@ impl Manifest {
     }
 
     /// Activates every file in the manifest, applying them to the filesystem in
-    /// dependency order.
-    pub fn activate(&mut self, prefix: &str) {
+    /// dependency order. Returns per-file failures; the caller decides whether
+    /// any failure is fatal.
+    pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
+        let mut failures = Vec::new();
         for mut file in self.files.iter().map(FileWithMetadata::from) {
-            _ = file
-                .activate(self.clobber_by_default, prefix)
-                .inspect_err(|err| {
-                    error!(
-                        "Failed to activate file: '{}'\n{:?}",
-                        file.target.display(),
-                        err
-                    );
-                });
+            if let Err(err) = file.activate(self.clobber_by_default, prefix) {
+                error!(
+                    "Failed to activate file: '{}'\n{:?}",
+                    file.target.display(),
+                    err
+                );
+                failures.push((file.target.clone(), err));
+            }
         }
+        failures
     }
 
     /// Removes every file in the manifest from the filesystem in reverse
-    /// dependency order.
-    pub fn deactivate(&mut self) {
+    /// dependency order. Returns per-file failures; the caller decides whether
+    /// any failure is fatal.
+    pub fn deactivate(&mut self) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
+        let mut failures = Vec::new();
         for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
-            _ = file.deactivate().inspect_err(|err| {
+            if let Err(err) = file.deactivate() {
                 error!(
                     "Failed to deactivate file: '{}'\n{:?}",
                     file.target.display(),
                     err
                 );
-            });
+                failures.push((file.target.clone(), err));
+            }
         }
+        failures
     }
 
     /// Brings the filesystem from the state described by the manifest at
@@ -413,8 +434,17 @@ impl Manifest {
         let mut old_manifest = match old_path.try_exists() {
             Ok(true) => Self::read(old_path, self.impure).map_err(DiffError::OldManifestRead)?,
             Ok(false) if fallback => {
-                self.activate(prefix);
-                return Ok(());
+                let failures = self.activate(prefix);
+                return if failures.is_empty() {
+                    Ok(())
+                } else {
+                    Err(DiffError::ActivationFailed(
+                        failures
+                            .into_iter()
+                            .map(|(p, e)| (p, format!("{e:?}")))
+                            .collect(),
+                    ))
+                };
             }
             Ok(false) => return Err(DiffError::OldManifestMissing),
             Err(err) => return Err(DiffError::Other(color_eyre::Report::from(err))),
@@ -443,7 +473,11 @@ impl Manifest {
 
         // Remove files in old manifest
         // which aren't in new manifest
-        old_manifest.deactivate();
+        let mut failures: Vec<(PathBuf, String)> = old_manifest
+            .deactivate()
+            .into_iter()
+            .map(|(p, e)| (p, format!("{e:?}")))
+            .collect();
 
         for (old, new) in updated_files {
             if !old
@@ -523,8 +557,16 @@ impl Manifest {
         // Verified
         self.files.append(&mut same_files);
         // Activate new files
-        self.activate(prefix);
-        Ok(())
+        failures.extend(
+            self.activate(prefix)
+                .into_iter()
+                .map(|(p, e)| (p, format!("{e:?}"))),
+        );
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(DiffError::ActivationFailed(failures))
+        }
     }
 }
 
