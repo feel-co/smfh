@@ -430,6 +430,7 @@ impl Manifest {
     /// - [`DiffError::OldManifestRead`]: the old manifest exists but cannot be
     ///   read
     /// - [`DiffError::Other`]: probing the old manifest path fails
+    #[allow(clippy::too_many_lines)]
     pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<(), DiffError> {
         let mut old_manifest = match old_path.try_exists() {
             Ok(true) => Self::read(old_path, self.impure).map_err(DiffError::OldManifestRead)?,

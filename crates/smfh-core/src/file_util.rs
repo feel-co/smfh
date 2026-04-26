@@ -206,7 +206,7 @@ impl FileWithMetadata {
                     FileKind::Copy => self.copy(),
                     _ => panic!("This should never happen"),
                 }
-                .and_then(|_| {
+                .and_then(|()| {
                     info!(
                         "Renaming '{}' -> '{}'",
                         temp_path.display(),
