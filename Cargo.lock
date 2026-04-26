@@ -716,14 +716,14 @@ dependencies = [
 
 [[package]]
 name = "smfh"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "smfh-core",
 ]
 
 [[package]]
 name = "smfh-cli"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "smfh-core"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "blake3",
  "color-eyre",

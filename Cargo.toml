@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 readme = true
 description = "Sleek Manifest File Handler"
@@ -15,7 +15,7 @@ repository = "https://github.com/feel-co/smfh"
 # requires all dependencies to have a version number. Without this, smfh
 # cannot be published. Since smfh *does* follow the workspace version, it's
 # a good idea to bump this version as you bump the one under workspace.package
-smfh-core = { path = "./crates/smfh-core", version = "1.4.0" }
+smfh-core = { path = "./crates/smfh-core", version = "1.5.0" }
 
 blake3 = { version = "1.8.3", features = ["mmap"] }
 clap = { version = "4.6.0", features = ["derive"] }
