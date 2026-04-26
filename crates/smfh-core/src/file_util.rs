@@ -321,7 +321,11 @@ impl FileWithMetadata {
                 metadata: Some(ref metadata),
                 ..
             } if gid != metadata.gid() => Ok(false),
-
+            Self {
+                kind: FileKind::Copy | FileKind::Symlink,
+                ref ignore_modification,
+                ..
+            } if ignore_modification.is_some_and(|x| x) => Ok(true),
             Self {
                 kind: FileKind::Symlink,
                 ref target,
@@ -340,7 +344,6 @@ impl FileWithMetadata {
                     Ok(read_link(target)? == std::path::absolute(source)?)
                 }
             }
-
             Self {
                 kind: FileKind::Directory,
                 metadata: Some(ref metadata),
@@ -355,13 +358,8 @@ impl FileWithMetadata {
                 kind: FileKind::Copy,
                 ref target,
                 source: Some(ref source),
-                ref ignore_modification,
                 ..
             } => {
-                if ignore_modification.is_some_and(|x| x) {
-                    return Ok(true);
-                }
-
                 if fs::symlink_metadata(target)?.len() != fs::symlink_metadata(source)?.len() {
                     return Ok(false);
                 }
