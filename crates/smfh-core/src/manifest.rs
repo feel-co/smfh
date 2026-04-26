@@ -367,7 +367,9 @@ impl Manifest {
                 });
             }
 
-            if file.ignore_modification.is_some() && file.kind != FileKind::Copy {
+            if file.ignore_modification.is_some()
+                && !matches!(file.kind, FileKind::Copy | FileKind::Symlink)
+            {
                 errors.push(VerifyError {
                     target: file.target.clone(),
                     kind: file.kind,

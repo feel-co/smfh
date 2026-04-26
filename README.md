@@ -20,7 +20,7 @@ Note: any option set to `null` here is optional
       "uid": null,
       "gid": null,
       "clobber": null,
-      "ignore_modifications": null
+      "ignore_modification": null
     },
     {
       "type": "symlink",
@@ -30,7 +30,8 @@ Note: any option set to `null` here is optional
       "uid": null,
       "gid": null,
       "clobber": null,
-      "follow_symlinks": null
+      "follow_symlinks": null,
+      "ignore_modification": null
     },
     {
       "type": "modify",
