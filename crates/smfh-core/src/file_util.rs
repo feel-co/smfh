@@ -43,6 +43,7 @@ use std::{
         Path,
         PathBuf,
     },
+    result::Result::Ok,
 };
 /// A manifest [`File`] paired with its live filesystem metadata.
 pub struct FileWithMetadata {
@@ -306,6 +307,22 @@ impl FileWithMetadata {
                 ..
             } => Err(eyre!("File '{}' missing_source", target.display())),
             Self {
+                kind: FileKind::Copy,
+                metadata: Some(ref metadata),
+                ..
+            } if !metadata.is_file() => Ok(false),
+            Self {
+                kind: FileKind::Symlink,
+                metadata: Some(ref metadata),
+                ..
+            } if !metadata.is_symlink() => Ok(false),
+            Self {
+                metadata: Some(_),
+                kind: FileKind::Copy | FileKind::Symlink,
+                ignore_modification: Some(x),
+                ..
+            } if x => Ok(true),
+            Self {
                 kind: FileKind::Copy | FileKind::Directory | FileKind::Modify,
                 permissions: Some(perms),
                 metadata: Some(ref metadata),
@@ -321,11 +338,6 @@ impl FileWithMetadata {
                 metadata: Some(ref metadata),
                 ..
             } if gid != metadata.gid() => Ok(false),
-            Self {
-                kind: FileKind::Copy | FileKind::Symlink,
-                ref ignore_modification,
-                ..
-            } if ignore_modification.is_some_and(|x| x) => Ok(true),
             Self {
                 kind: FileKind::Symlink,
                 ref target,
@@ -349,18 +361,15 @@ impl FileWithMetadata {
                 metadata: Some(ref metadata),
                 ..
             } => Ok(metadata.is_dir()),
-            Self {
-                kind: FileKind::Copy,
-                metadata: Some(ref metadata),
-                ..
-            } if !metadata.is_file() => Ok(false),
+
             Self {
                 kind: FileKind::Copy,
                 ref target,
                 source: Some(ref source),
+                metadata: Some(ref metadata),
                 ..
             } => {
-                if fs::symlink_metadata(target)?.len() != fs::symlink_metadata(source)?.len() {
+                if metadata.len() != fs::symlink_metadata(source)?.len() {
                     return Ok(false);
                 }
 
