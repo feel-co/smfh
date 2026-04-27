@@ -725,16 +725,15 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_unexpected_ignore_modification_for_symlink() {
-        let mut f = file(FileKind::Symlink, "/a");
-        f.source = Some(PathBuf::from("/b"));
+    fn verify_rejects_unexpected_ignore_modification_for_directoy() {
+        let mut f = file(FileKind::Directory, "/a");
         f.ignore_modification = Some(true);
         let errors = manifest_with(vec![f]).verify();
         assert_eq!(
             errors,
             vec![VerifyError {
                 target: PathBuf::from("/a"),
-                kind: FileKind::Symlink,
+                kind: FileKind::Directory,
                 violation: Violation::UnexpectedIgnoreModification,
             }]
         );
