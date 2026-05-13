@@ -34,7 +34,7 @@
         pkgs.writeShellApplication {
           name = "format";
           runtimeInputs = builtins.attrValues {
-            inherit (pkgs) nixfmt-rfc-style fd;
+            inherit (pkgs) nixfmt fd;
             inherit (pkgs.rust-bin.nightly.latest) rustfmt;
           };
           text = ''
