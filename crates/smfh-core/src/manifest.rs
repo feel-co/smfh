@@ -170,6 +170,9 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
 }
 
 /// A single file entry in a [`Manifest`].
+///
+/// Files are ordered by [`kind`](Self::kind) and then by path depth
+/// (shallowest first). See the [`Ord`] implementation for details.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct File {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,13 +330,13 @@ impl Manifest {
     ///
     /// Returns a [`VerifyError`] if:
     ///
-    /// - [`VerifyError::MissingSource`]: a `Copy` or `Symlink` file has no
+    /// - [`Violation::MissingSource`]: a `Copy` or `Symlink` file has no
     ///   `source`
-    /// - [`VerifyError::UnexpectedSource`]: a `Delete`, `Directory`, or
-    ///   `Modify` file has a `source`
-    /// - [`VerifyError::UnexpectedFollowSymlinks`]: a non-`Symlink` file has
+    /// - [`Violation::UnexpectedSource`]: a `Delete`, `Directory`, or `Modify`
+    ///   file has a `source`
+    /// - [`Violation::UnexpectedFollowSymlinks`]: a non-`Symlink` file has
     ///   `follow_symlinks` set
-    /// - [`VerifyError::UnexpectedIgnoreModification`]: a non-`Copy` file has
+    /// - [`Violation::UnexpectedIgnoreModification`]: a non-`Copy` file has
     ///   `ignore_modification` set
     #[must_use]
     pub fn verify(&self) -> Vec<VerifyError> {
@@ -383,6 +386,9 @@ impl Manifest {
     /// Activates every file in the manifest, applying them to the filesystem in
     /// dependency order. Returns per-file failures; the caller decides whether
     /// any failure is fatal.
+    ///
+    /// `prefix` is used when backing up existing files that would be
+    /// overwritten. See [`prefix_move`].
     pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
@@ -400,8 +406,9 @@ impl Manifest {
     }
 
     /// Removes every file in the manifest from the filesystem in reverse
-    /// dependency order. Returns per-file failures; the caller decides whether
-    /// any failure is fatal.
+    /// dependency order (deletes first, then modifies, symlinks, copies, and
+    /// finally directories). Returns per-file failures; the caller decides
+    /// whether any failure is fatal.
     pub fn deactivate(&mut self) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
