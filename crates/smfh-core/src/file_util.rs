@@ -11,6 +11,7 @@ use color_eyre::{
         eyre,
     },
 };
+use core::result::Result::Ok;
 use log::{
     info,
     warn,
@@ -21,7 +22,7 @@ use manifest::{
 };
 use rand::distr::{
     Alphanumeric,
-    SampleString,
+    SampleString as _,
 };
 use std::{
     ffi::OsString,
@@ -43,43 +44,9 @@ use std::{
         Path,
         PathBuf,
     },
-    result::Result::Ok,
 };
-/// A manifest [`File`] paired with its live filesystem metadata.
-pub struct FileWithMetadata {
-    pub source: Option<PathBuf>,
-    pub target: PathBuf,
-    pub kind: FileKind,
-    pub clobber: Option<bool>,
 
-    pub permissions: Option<u32>,
-    pub uid: Option<u32>,
-    pub gid: Option<u32>,
-    pub deactivate: Option<bool>,
-    pub follow_symlinks: Option<bool>,
-    pub ignore_modification: Option<bool>,
-
-    pub metadata: Option<Metadata>,
-}
-
-impl From<&File> for FileWithMetadata {
-    fn from(file: &File) -> Self {
-        Self {
-            source: file.source.clone(),
-            target: file.target.clone(),
-            kind: file.kind,
-            clobber: file.clobber,
-            permissions: file.permissions,
-            uid: file.uid,
-            gid: file.gid,
-            deactivate: file.deactivate,
-            follow_symlinks: file.follow_symlinks,
-            ignore_modification: file.ignore_modification,
-            metadata: None,
-        }
-    }
-}
-impl FileWithMetadata {
+impl File {
     /// Activates the file at [`target`][Self::target] by performing the
     /// operation described by [`kind`][Self::kind]. Handles clobber and
     /// backup (via `prefix`) before writing.
@@ -93,56 +60,49 @@ impl FileWithMetadata {
     /// - existing-file removal or backup fails
     /// - the underlying file operation (symlink, copy, directory creation,
     ///   chmod/chown) fails
-    ///
-    /// # Panics
-    ///
-    /// Does not panic under correct use; internal guards ensure `metadata` is
-    /// `Some` before every `.unwrap()` site is reached.
     pub fn activate(&mut self, clobber_by_default: Option<bool>, prefix: &str) -> Result<()> {
-        if self.check_source() {
-            return Ok(());
-        }
-
-        self.set_metadata()?;
-
-        let clobber = self
-            .clobber
-            .unwrap_or_else(|| clobber_by_default.unwrap_or(false));
-
-        if clobber
-            && self.metadata.is_some()
-            && self
-                .atomic_activate()
-                .wrap_err("While attempting atomic activation")?
-        {
-            return Ok(());
-        }
-
         if self.check().unwrap_or(false) {
             info!("File '{}' already correct", self.target.display());
             return Ok(());
         }
 
-        if match *self {
-            Self { metadata: None, .. }
-            | Self {
-                kind: FileKind::Modify | FileKind::Delete,
-                ..
-            } => false,
-            // Don't clobber directories
-            // If they're supposed to be
-            // directories
-            Self {
-                kind: FileKind::Directory,
-                metadata: Some(ref metadata),
-                ..
-            } => !metadata.is_dir(),
-            _ => true,
-        } {
-            if clobber {
-                delete(&self.target, self.metadata.as_ref().unwrap())?;
-            } else {
-                prefix_move(&self.target, prefix)?;
+        if let Some(metadata) = get_metadata(&self.target)? {
+            if self.kind == FileKind::Delete {
+                delete(&self.target, &metadata)?;
+                return Ok(());
+            }
+
+            let clobber = self
+                .clobber
+                .unwrap_or_else(|| clobber_by_default.unwrap_or(false));
+
+            if clobber
+                && self
+                    .atomic_activate()
+                    .wrap_err("While attempting atomic activation")?
+            {
+                return Ok(());
+            }
+
+            if match *self {
+                Self {
+                    kind: FileKind::Modify,
+                    ..
+                } => false,
+                // Don't clobber directories
+                // If they're supposed to be
+                // directories
+                Self {
+                    kind: FileKind::Directory,
+                    ..
+                } => !metadata.is_dir(),
+                _ => true,
+            } {
+                if clobber {
+                    delete(&self.target, &metadata)?;
+                } else {
+                    prefix_move(&self.target, prefix)?;
+                }
             }
         }
 
@@ -151,7 +111,7 @@ impl FileWithMetadata {
             FileKind::Copy => self.copy(),
             FileKind::Symlink => self.symlink(),
             FileKind::Modify => self.chmod_chown(),
-            FileKind::Delete => delete(&self.target, self.metadata.as_ref().unwrap()),
+            FileKind::Delete => Ok(()),
         }
     }
 
@@ -170,59 +130,64 @@ impl FileWithMetadata {
     /// - directory listing fails
     /// - symlink or copy creation fails
     /// - the final rename fails
-    ///
-    /// # Panics
-    ///
-    /// Panics if called on a `Symlink` or `Copy` file with `metadata` or
-    /// `source` being `None`.
     pub fn atomic_activate(&mut self) -> Result<bool> {
-        match self.kind {
-            FileKind::Symlink | FileKind::Copy => {
-                fn randomize_filename(file: &mut FileWithMetadata) {
-                    let string = Alphanumeric.sample_string(&mut rand::rng(), 16);
-                    file.target.set_file_name(string);
-                    if file.target.exists() {
-                        randomize_filename(file);
-                    }
-                }
-
-                let target_is_dir = self.metadata.as_ref().unwrap().is_dir();
-                let source_is_dir = fs::symlink_metadata(self.source.as_ref().unwrap())?.is_dir();
-
-                if target_is_dir != source_is_dir
-                    || target_is_dir
-                        && source_is_dir
-                        && self.source.as_ref().unwrap().read_dir()?.next().is_some()
-                {
-                    return Ok(false);
-                }
-
-                let target = self.target.clone();
-
-                randomize_filename(self);
-                let temp_path = self.target.clone();
-
-                match self.kind {
-                    FileKind::Symlink => self.symlink(),
-                    FileKind::Copy => self.copy(),
-                    _ => panic!("This should never happen"),
-                }
-                .and_then(|()| {
-                    info!(
-                        "Renaming '{}' -> '{}'",
-                        temp_path.display(),
-                        target.display()
-                    );
-                    fs::rename(&temp_path, &target).map_err(Into::into)
-                })
-                .inspect_err(|_| {
-                    let _ = fs::remove_file(&temp_path);
-                })?;
-
-                Ok(true)
+        fn randomize_filename(file: &mut File) {
+            let string = Alphanumeric.sample_string(&mut rand::rng(), 16);
+            file.target.set_file_name(string);
+            if file.target.exists() {
+                randomize_filename(file);
             }
-            _ => Ok(false),
         }
+        #[expect(clippy::type_complexity)]
+        // This is gross but allows me to only match FileKind once
+        // and doesn't require leaving unreachable code blocks
+        let exit_on_definition: Box<dyn Fn(&mut Self) -> Result<()>> = match self.kind {
+            FileKind::Directory | FileKind::Modify | FileKind::Delete => {
+                return Ok(false);
+            }
+            FileKind::Copy => Box::new(move |f| f.copy()),
+            FileKind::Symlink => Box::new(move |f| f.symlink()),
+        };
+
+        let Some(metadata) = get_metadata(&self.target)? else {
+            return Ok(false);
+        };
+
+        let Some(ref source) = self.source else {
+            return Err(eyre!("Missing source"));
+        };
+
+        let target_is_dir = metadata.is_dir();
+        let source_is_dir = fs::symlink_metadata(source)?.is_dir();
+
+        if target_is_dir != source_is_dir
+            || target_is_dir && source_is_dir && source.read_dir()?.next().is_some()
+        {
+            return Ok(false);
+        }
+
+        let target = self.target.clone();
+
+        randomize_filename(self);
+        let temp_path = self.target.clone();
+
+        {
+            if let Err(e) = exit_on_definition(self) {
+                Err(e)
+            } else {
+                info!(
+                    "Renaming '{}' -> '{}'",
+                    temp_path.display(),
+                    target.display()
+                );
+                fs::rename(&temp_path, &target).map_err(Into::into)
+            }
+        }
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&temp_path);
+        })?;
+
+        Ok(true)
     }
 
     /// Removes the file at [`target`][Self::target] if it still matches the
@@ -235,22 +200,15 @@ impl FileWithMetadata {
     /// - the file has been modified since activation
     /// - the target is not the expected type
     /// - filesystem removal fails
-    ///
-    /// # Panics
-    ///
-    /// Does not panic under correct use; `metadata` is verified to be `Some`
-    /// before every `.unwrap()` site is reached.
-    pub fn deactivate(&mut self) -> Result<()> {
+    pub fn deactivate(&self) -> Result<()> {
         if !self.deactivate.unwrap_or(true) {
             return Ok(());
         }
 
-        self.set_metadata()?;
-
-        if self.metadata.is_none() {
+        let Some(metadata) = get_metadata(&self.target)? else {
             info!("File already deleted '{}'", self.target.display());
             return Ok(());
-        }
+        };
 
         if !self.check()? {
             return Err(eyre!("File is not the same as expected"));
@@ -259,20 +217,15 @@ impl FileWithMetadata {
         match self.kind {
             // no-op on deactivation
             FileKind::Delete | FileKind::Modify => Ok(()),
-            // delete only if directory is empty
-            FileKind::Directory => match self.metadata.as_ref() {
-                Some(x) if x.is_dir() => {
-                    fs::remove_dir(&self.target)?;
-                    info!("Deleting directory '{}'", self.target.display());
-                    Ok(())
-                }
-                Some(_) => Err(eyre!("File is not directory")),
-                None => Err(eyre!("Cannot access file")),
-            },
-            // delete only if types match
-            FileKind::Symlink | FileKind::Copy => {
-                delete(&self.target, self.metadata.as_ref().unwrap())
+            // deletes only if directory is empty
+            FileKind::Directory if metadata.is_dir() => {
+                fs::remove_dir(&self.target)?;
+                info!("Deleting directory '{}'", self.target.display());
+                Ok(())
             }
+            FileKind::Directory => Err(eyre!("File is not directory")),
+            // delete only if types match
+            FileKind::Symlink | FileKind::Copy => delete(&self.target, &metadata),
         }
     }
 
@@ -286,20 +239,22 @@ impl FileWithMetadata {
     /// - a `Symlink` or `Copy` file has no `source`
     /// - canonicalization, symlink resolution, or stat calls fail
     pub fn check(&self) -> Result<bool> {
+        // check if the source exists prior to everything else
+        if self.check_source() {
+            return Ok(false);
+        }
+        // then check if the target exists at all
+        let Some(metadata) = get_metadata(&self.target)? else {
+            return Ok(self.kind == FileKind::Delete);
+        };
+
         match *self {
             Self {
-                metadata: None,
-                kind,
-                ..
-            } => Ok(kind == FileKind::Delete),
-            Self {
-                metadata: Some(_),
                 kind: FileKind::Delete,
                 ..
             } => Ok(false),
             // This should never happen
-            // as it's checked before this
-            // function is ever called
+            // as it's checked by check_source
             Self {
                 source: None,
                 kind: FileKind::Symlink | FileKind::Copy,
@@ -308,16 +263,13 @@ impl FileWithMetadata {
             } => Err(eyre!("File '{}' missing_source", target.display())),
             Self {
                 kind: FileKind::Copy,
-                metadata: Some(ref metadata),
                 ..
             } if !metadata.is_file() => Ok(false),
             Self {
                 kind: FileKind::Symlink,
-                metadata: Some(ref metadata),
                 ..
             } if !metadata.is_symlink() => Ok(false),
             Self {
-                metadata: Some(_),
                 kind: FileKind::Copy | FileKind::Symlink,
                 ignore_modification: Some(x),
                 ..
@@ -325,19 +277,10 @@ impl FileWithMetadata {
             Self {
                 kind: FileKind::Copy | FileKind::Directory | FileKind::Modify,
                 permissions: Some(perms),
-                metadata: Some(ref metadata),
                 ..
             } if perms != (metadata.mode() & 0o7_777) => Ok(false),
-            Self {
-                uid: Some(uid),
-                metadata: Some(ref metadata),
-                ..
-            } if uid != metadata.uid() => Ok(false),
-            Self {
-                gid: Some(gid),
-                metadata: Some(ref metadata),
-                ..
-            } if gid != metadata.gid() => Ok(false),
+            Self { uid: Some(uid), .. } if uid != metadata.uid() => Ok(false),
+            Self { gid: Some(gid), .. } if gid != metadata.gid() => Ok(false),
             Self {
                 kind: FileKind::Symlink,
                 ref target,
@@ -358,7 +301,6 @@ impl FileWithMetadata {
             }
             Self {
                 kind: FileKind::Directory,
-                metadata: Some(ref metadata),
                 ..
             } => Ok(metadata.is_dir()),
 
@@ -366,7 +308,6 @@ impl FileWithMetadata {
                 kind: FileKind::Copy,
                 ref target,
                 source: Some(ref source),
-                metadata: Some(ref metadata),
                 ..
             } => {
                 if metadata.len() != fs::symlink_metadata(source)?.len() {
@@ -382,28 +323,6 @@ impl FileWithMetadata {
                 kind: FileKind::Modify,
                 ..
             } => Ok(true),
-        }
-    }
-
-    /// Fetches symlink metadata for [`target`][Self::target] and stores it in
-    /// [`metadata`][Self::metadata]. Sets [`metadata`][Self::metadata] to
-    /// `None` if the target does not exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the filesystem returns anything other than
-    /// `NotFound`. `NotFound` is silently treated as `None`.
-    pub fn set_metadata(&mut self) -> Result<()> {
-        match fs::symlink_metadata(&self.target) {
-            Ok(metadata) => {
-                self.metadata = Some(metadata);
-                Ok(())
-            }
-            Err(err) if err.kind() == ErrorKind::NotFound => {
-                self.metadata = None;
-                Ok(())
-            }
-            Err(err) => Err(err).wrap_err("While setting metadata"),
         }
     }
 
@@ -468,32 +387,30 @@ impl FileWithMetadata {
     /// - the target does not exist
     /// - setting permissions fails
     /// - `chown` or `lchown` fails
-    pub fn chmod_chown(&mut self) -> Result<()> {
-        self.set_metadata()?;
-        let Some(metadata) = self.metadata.clone() else {
+    pub fn chmod_chown(&self) -> Result<()> {
+        let Some(metadata) = get_metadata(&self.target)? else {
             return Err(eyre!(
                 "Can't modify file '{}', file does not exist",
                 self.target.display()
             ));
         };
 
-        if self.kind != FileKind::Symlink {
-            if let Some(x) = self.permissions {
-                let new_perms = fs::Permissions::from_mode(x);
+        if self.kind != FileKind::Symlink
+            && let Some(x) = self.permissions
+        {
+            let new_perms = fs::Permissions::from_mode(x);
 
-                if metadata.mode() & 0o7_777 == new_perms.mode() {
-                    return Ok(());
-                }
-                info!(
-                    "Setting permissions of: '{}' to: '{:o}'",
-                    &self.target.display(),
-                    new_perms.mode(),
-                );
-
-                //This doesn't work with symlinks
-                fs::set_permissions(&self.target, new_perms)?;
+            if metadata.mode() & 0o7_777 == new_perms.mode() {
+                return Ok(());
             }
-            self.set_metadata()?;
+            info!(
+                "Setting permissions of: '{}' to: '{:o}'",
+                &self.target.display(),
+                new_perms.mode(),
+            );
+
+            //This doesn't work with symlinks
+            fs::set_permissions(&self.target, new_perms)?;
         }
 
         if self.uid.is_some() || self.gid.is_some() {
@@ -529,31 +446,29 @@ impl FileWithMetadata {
     /// - parent directory cannot be created
     /// - source path cannot be canonicalized
     /// - symlink creation fails
-    ///
-    /// # Panics
-    ///
-    /// Panics if `source` is `None`.
-    pub fn symlink(&mut self) -> Result<()> {
+    pub fn symlink(&self) -> Result<()> {
         _ = file_util::mkdir(
             self.target
                 .parent()
                 .ok_or_eyre("Failed to get parent directory")?,
         );
-
-        let source = if self.follow_symlinks.unwrap_or(true) {
-            fs::canonicalize(self.source.as_ref().unwrap())?
-        } else {
-            path::absolute(self.source.as_ref().unwrap())?
+        let Some(ref source) = self.source else {
+            return Err(eyre!("Missing source"));
         };
 
-        symlink(&source, &self.target)?;
+        let source_path = if self.follow_symlinks.unwrap_or(true) {
+            fs::canonicalize(source)?
+        } else {
+            path::absolute(source)?
+        };
+
+        symlink(&source_path, &self.target)?;
         info!(
             "Symlinked '{}' -> '{}'",
             source.display(),
             &self.target.display(),
         );
 
-        self.set_metadata()?;
         self.chmod_chown()?;
         Ok(())
     }
@@ -567,27 +482,24 @@ impl FileWithMetadata {
     /// - parent directory cannot be created
     /// - source path cannot be canonicalized
     /// - file copy fails
-    ///
-    /// # Panics
-    ///
-    /// Panics if `source` is `None`.
-    pub fn copy(&mut self) -> Result<()> {
+    pub fn copy(&self) -> Result<()> {
         _ = file_util::mkdir(
             self.target
                 .parent()
                 .ok_or_eyre("Failed to get parent directory")?,
         );
+        let Some(ref source) = self.source else {
+            return Err(eyre!("Missing source"));
+        };
+        let source_path = fs::canonicalize(source)?;
 
-        let source = fs::canonicalize(self.source.as_ref().unwrap())?;
-
-        fs::copy(&source, &self.target)?;
+        fs::copy(&source_path, &self.target)?;
         info!(
             "Copied '{}' -> '{}'",
             source.display(),
             &self.target.display(),
         );
 
-        self.set_metadata()?;
         self.chmod_chown()?;
         Ok(())
     }
@@ -600,9 +512,8 @@ impl FileWithMetadata {
     /// Returns an error if:
     /// - directory creation fails
     /// - permission or ownership changes fail
-    pub fn directory(&mut self) -> Result<()> {
+    pub fn directory(&self) -> Result<()> {
         mkdir(&self.target)?;
-        self.set_metadata()?;
         self.chmod_chown()?;
         Ok(())
     }
@@ -694,13 +605,28 @@ pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
     Ok(())
 }
 
+/// Fetches symlink metadata.
+///
+/// # Errors
+///
+/// Returns an error if the filesystem returns anything other than
+/// `NotFound`. `NotFound` is silently treated as `None`.
+#[inline]
+pub fn get_metadata(path: &Path) -> Result<Option<Metadata>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).wrap_err("While getting metadata"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::FileKind;
 
-    fn fwm(kind: FileKind, target: PathBuf, source: Option<PathBuf>) -> FileWithMetadata {
-        FileWithMetadata {
+    fn make_file(kind: FileKind, target: PathBuf, source: Option<PathBuf>) -> File {
+        File {
             source,
             target,
             kind,
@@ -711,14 +637,13 @@ mod tests {
             deactivate: None,
             follow_symlinks: None,
             ignore_modification: None,
-            metadata: None,
         }
     }
 
     #[test]
     fn check_no_metadata_delete_returns_true() {
         assert!(
-            fwm(FileKind::Delete, PathBuf::from("/x"), None)
+            make_file(FileKind::Delete, PathBuf::from("/x"), None)
                 .check()
                 .unwrap()
         );
@@ -727,7 +652,7 @@ mod tests {
     #[test]
     fn check_no_metadata_non_delete_returns_false() {
         assert!(
-            !fwm(FileKind::Copy, PathBuf::from("/x"), None)
+            !make_file(FileKind::Copy, PathBuf::from("/x"), None)
                 .check()
                 .unwrap()
         );
@@ -738,8 +663,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f");
         fs::write(&path, b"").unwrap();
-        let mut f = fwm(FileKind::Delete, path, None);
-        f.set_metadata().unwrap();
+        let f = make_file(FileKind::Delete, path, None);
         assert!(!f.check().unwrap());
     }
 

@@ -144,6 +144,7 @@ fn main() {
         Subcommands::Clean { manifest } => {
             let m = verify(&manifest, args.impure);
             match serde_json::to_string_pretty(&m) {
+                #[expect(clippy::print_stdout)]
                 Ok(s) => println!("{s}"),
                 Err(e) => {
                     error!("{e:?}");

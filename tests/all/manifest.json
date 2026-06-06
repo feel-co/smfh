@@ -2,7 +2,7 @@
   "files": [
     {
       "type": "symlink",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/link"
     },
     {
@@ -13,12 +13,12 @@
     },
     {
       "type": "copy",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/file"
     },
     {
       "type": "copy",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/file_which_has_been_modified"
     },
     {
@@ -27,12 +27,12 @@
     },
     {
       "type": "copy",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/directory/file_in_dir"
     },
     {
       "type": "symlink",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/directory/symlink_in_dir"
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "type": "copy",
-      "source": "./sources/file",
+      "source": "./sources/file2",
       "target": "./outputs/modified_file",
       "permissions": "700"
     },
@@ -63,5 +63,5 @@
     }
   ],
   "clobber_by_default": false,
-  "version": 2
+  "version": 3
 }

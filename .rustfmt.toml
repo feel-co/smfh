@@ -13,3 +13,4 @@ imports_indent = "Block"
 imports_layout = "Vertical"
 reorder_modules = true
 reorder_imports = true
+reorder_impl_items = true

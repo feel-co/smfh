@@ -1,0 +1,67 @@
+{
+  "files": [
+    {
+      "type": "symlink",
+      "source": "./sources/file",
+      "target": "./outputs/link"
+    },
+    {
+      "type": "symlink",
+      "source": "./sources/link",
+      "target": "./outputs/link-to-link",
+      "follow_symlinks": false
+    },
+    {
+      "type": "copy",
+      "source": "./sources/file",
+      "target": "./outputs/file"
+    },
+    {
+      "type": "copy",
+      "source": "./sources/file",
+      "target": "./outputs/file_which_has_been_modified"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/directory"
+    },
+    {
+      "type": "copy",
+      "source": "./sources/file",
+      "target": "./outputs/directory/file_in_dir"
+    },
+    {
+      "type": "symlink",
+      "source": "./sources/file",
+      "target": "./outputs/directory/symlink_in_dir"
+    },
+    {
+      "type": "modify",
+      "target": "./outputs/modified",
+      "permissions": "770"
+    },
+    {
+      "type": "copy",
+      "source": "./sources/file",
+      "target": "./outputs/modified_file",
+      "permissions": "700"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/modified_directory",
+      "permissions": "700"
+    },
+    {
+      "type": "directory",
+      "target": "./outputs/not_dir",
+      "permissions": "700",
+      "clobber": true
+    },
+    {
+      "type": "delete",
+      "target": "./outputs/delete"
+    }
+  ],
+  "clobber_by_default": false,
+  "version": 3
+}
