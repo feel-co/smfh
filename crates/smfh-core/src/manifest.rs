@@ -1,7 +1,7 @@
 use crate::{
     VERSION,
     file_util::{
-        FileWithMetadata,
+        get_metadata,
         prefix_move,
     },
 };
@@ -41,7 +41,7 @@ impl Display for ReadError {
     }
 }
 
-impl std::error::Error for ReadError {}
+impl core::error::Error for ReadError {}
 
 /// Error returned by [`Manifest::diff`].
 #[derive(Debug)]
@@ -76,7 +76,7 @@ impl Display for DiffError {
     }
 }
 
-impl std::error::Error for DiffError {}
+impl core::error::Error for DiffError {}
 
 /// A single validation violation found by [`Manifest::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +112,7 @@ impl Display for VerifyError {
     }
 }
 
-impl std::error::Error for VerifyError {}
+impl core::error::Error for VerifyError {}
 
 use log::{
     error,
@@ -139,11 +139,11 @@ use std::{
     },
 };
 
-#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+#[expect(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
 fn is_false(t: &Option<bool>) -> bool {
     t.is_none_or(|x| !x)
 }
-#[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
+#[expect(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
 fn is_true(t: &Option<bool>) -> bool {
     t.is_none_or(|x| x)
 }
@@ -308,9 +308,9 @@ impl Manifest {
             });
         } else if impure {
             fn expand(path_buf: &PathBuf) -> Result<PathBuf> {
-                Ok(shellexpand(path_buf)
+                return Ok(shellexpand(path_buf)
                     .map_err(|err| eyre!("{err:?}"))?
-                    .to_path_buf())
+                    .to_path_buf());
             }
             for file in &mut manifest.files {
                 if let Some(ref src) = file.source.clone() {
@@ -392,7 +392,7 @@ impl Manifest {
     pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
-        for mut file in self.files.iter().map(FileWithMetadata::from) {
+        for file in &mut self.files {
             if let Err(err) = file.activate(self.clobber_by_default, prefix) {
                 error!(
                     "Failed to activate file: '{}'\n{:?}",
@@ -412,7 +412,7 @@ impl Manifest {
     pub fn deactivate(&mut self) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
-        for mut file in self.files.iter().map(FileWithMetadata::from).rev() {
+        for file in self.files.iter_mut().rev() {
             if let Err(err) = file.deactivate() {
                 error!(
                     "Failed to deactivate file: '{}'\n{:?}",
@@ -439,7 +439,7 @@ impl Manifest {
     /// - [`DiffError::OldManifestRead`]: the old manifest exists but cannot be
     ///   read
     /// - [`DiffError::Other`]: probing the old manifest path fails
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines)]
     pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<(), DiffError> {
         let mut old_manifest = match old_path.try_exists() {
             Ok(true) => Self::read(old_path, self.impure).map_err(DiffError::OldManifestRead)?,
@@ -460,21 +460,26 @@ impl Manifest {
             Err(err) => return Err(DiffError::Other(color_eyre::Report::from(err))),
         };
 
+        // Files which have attributes other than `target` changed
         let mut updated_files: Vec<(File, File)> = vec![];
+        // Files which nothing needs to be done to
         let mut same_files: Vec<File> = vec![];
+        // self.files is files which are new or failed to be atomically updated
 
         old_manifest.files.retain(|file| {
-            if let Some(index) = self.files.iter().position(|inner| inner == file) {
-                same_files.push(self.files.swap_remove(index));
-                false
-            } else if let Some(index) = self.files.iter().position(|inner| {
-                matches!(inner.clone(), File {
+            if let Some(index) = self.files.iter().position(|inner| {
+                inner == file
+                    || matches!(inner.clone(), File {
                     kind: FileKind::Symlink | FileKind::Copy,
-                   target,
+                    target,
                     ..
-                } if (target == file.target))
+                } if target == file.target)
             }) {
-                updated_files.push((file.clone(), self.files.swap_remove(index)));
+                if &self.files[index] == file {
+                    same_files.push(self.files.swap_remove(index));
+                } else {
+                    updated_files.push((file.clone(), self.files.swap_remove(index)));
+                }
                 false
             } else {
                 true
@@ -494,59 +499,67 @@ impl Manifest {
                 .clobber
                 .unwrap_or_else(|| old_manifest.clobber_by_default.unwrap_or(false))
             {
-                let mut file = FileWithMetadata::from(&old);
+                let file = &old;
 
-                // Don't care if this errors
-                // metadata will just be none
-                if let Err(err) = file.set_metadata() {
-                    warn!(
-                        "Failed to get metadata for file '{}'\n{:?}",
-                        file.target.display(),
-                        err
-                    );
-                }
-
-                if file.metadata.is_some()
-                    && !file
-                        .check()
-                        .inspect_err(|err| {
-                            warn!(
-                                "Failed to check file: '{}', assuming file is incorrect\n{:?}",
-                                file.target.display(),
-                                err
-                            );
-                        })
-                        .unwrap_or(false)
-                {
-                    if let Err(err) = prefix_move(&file.target, prefix) {
+                match get_metadata(&old.target) {
+                    Err(err) => {
                         warn!(
-                            "Failed to backup file '{}'\n{:?}",
-                            file.target.display(),
+                            "Failed to get metadata for file '{}'\n{:?}",
+                            old.target.display(),
                             err
                         );
+                        continue;
                     }
-                    // if file existed but was wrong,
-                    // atomic action cannot be taken
-                    // so there's no point of forcing clobber
+                    Ok(Some(_)) => {
+                        if !file
+                            .check()
+                            .inspect_err(|err| {
+                                warn!(
+                                    "Failed to check file: '{}', assuming file is incorrect\n{:?}",
+                                    file.target.display(),
+                                    err
+                                );
+                            })
+                            .unwrap_or(false)
+                        {
+                            if let Err(err) = prefix_move(&file.target, prefix) {
+                                warn!(
+                                    "Failed to backup file '{}'\n{:?}",
+                                    file.target.display(),
+                                    err
+                                );
+                            }
+                            // if file existed but was wrong,
+                            // atomic action cannot be taken
+                            // so there's no point of forcing clobber
 
-                    // except this double checks
-                    self.files.push(new.clone());
-                    continue;
+                            // except this double checks
+                            self.files.push(new.clone());
+                            continue;
+                        }
+                    }
+                    Ok(None) => {}
                 }
             }
 
-            let mut atomic = FileWithMetadata::from(&new.clone());
+            let mut atomic = new.clone();
 
-            if let Err(err) = atomic.set_metadata() {
-                warn!(
-                    "Failed to get metadata for file '{}'\n{:?}",
-                    atomic.target.display(),
-                    err
-                );
-                continue;
+            match get_metadata(&atomic.target) {
+                Err(err) => {
+                    warn!(
+                        "Failed to get metadata for file '{}'\n{:?}",
+                        atomic.target.display(),
+                        err
+                    );
+                    continue;
+                }
+                Ok(None) => {
+                    self.files.push(new);
+                    continue;
+                }
+                Ok(_) => {}
             }
-
-            if atomic.metadata.is_none() {
+            if atomic.check_source() {
                 self.files.push(new);
                 continue;
             }
