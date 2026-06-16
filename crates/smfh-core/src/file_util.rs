@@ -43,6 +43,7 @@ use std::{
         self,
         Path,
         PathBuf,
+        absolute,
     },
 };
 
@@ -60,6 +61,7 @@ impl File {
     /// - existing-file removal or backup fails
     /// - the underlying file operation (symlink, copy, directory creation,
     ///   chmod/chown) fails
+    #[inline]
     pub fn activate(&mut self, clobber_by_default: Option<bool>, prefix: &str) -> Result<()> {
         if self.check().unwrap_or(false) {
             info!("File '{}' already correct", self.target.display());
@@ -130,6 +132,7 @@ impl File {
     /// - directory listing fails
     /// - symlink or copy creation fails
     /// - the final rename fails
+    #[inline]
     pub fn atomic_activate(&mut self) -> Result<bool> {
         fn randomize_filename(file: &mut File) {
             let string = Alphanumeric.sample_string(&mut rand::rng(), 16);
@@ -184,49 +187,10 @@ impl File {
             }
         }
         .inspect_err(|_| {
-            let _ = fs::remove_file(&temp_path);
+            _ = fs::remove_file(&temp_path);
         })?;
 
         Ok(true)
-    }
-
-    /// Removes the file at [`target`][Self::target] if it still matches the
-    /// expected state. No-op for [`Delete`][FileKind::Delete] and
-    /// [`Modify`][FileKind::Modify] kinds.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - the file has been modified since activation
-    /// - the target is not the expected type
-    /// - filesystem removal fails
-    pub fn deactivate(&self) -> Result<()> {
-        if !self.deactivate.unwrap_or(true) {
-            return Ok(());
-        }
-
-        let Some(metadata) = get_metadata(&self.target)? else {
-            info!("File already deleted '{}'", self.target.display());
-            return Ok(());
-        };
-
-        if !self.check()? {
-            return Err(eyre!("File is not the same as expected"));
-        }
-
-        match self.kind {
-            // no-op on deactivation
-            FileKind::Delete | FileKind::Modify => Ok(()),
-            // deletes only if directory is empty
-            FileKind::Directory if metadata.is_dir() => {
-                fs::remove_dir(&self.target)?;
-                info!("Deleting directory '{}'", self.target.display());
-                Ok(())
-            }
-            FileKind::Directory => Err(eyre!("File is not directory")),
-            // delete only if types match
-            FileKind::Symlink | FileKind::Copy => delete(&self.target, &metadata),
-        }
     }
 
     /// Returns `true` if the file at [`target`][Self::target] matches the
@@ -238,6 +202,7 @@ impl File {
     ///
     /// - a `Symlink` or `Copy` file has no `source`
     /// - canonicalization, symlink resolution, or stat calls fail
+    #[inline]
     pub fn check(&self) -> Result<bool> {
         // check if the source exists prior to everything else
         if self.check_source() {
@@ -296,7 +261,7 @@ impl File {
                 if canonicalize.unwrap_or(true) {
                     Ok(fs::canonicalize(target)? == fs::canonicalize(source)?)
                 } else {
-                    Ok(read_link(target)? == std::path::absolute(source)?)
+                    Ok(read_link(target)? == absolute(source)?)
                 }
             }
             Self {
@@ -329,6 +294,7 @@ impl File {
     /// Returns `true` if the source is absent or invalid for a
     /// [`Copy`][FileKind::Copy] or [`Symlink`][FileKind::Symlink] file,
     /// logging a warning. When `true`, the caller should skip activation.
+    #[inline]
     #[must_use]
     pub fn check_source(&self) -> bool {
         match *self {
@@ -387,6 +353,7 @@ impl File {
     /// - the target does not exist
     /// - setting permissions fails
     /// - `chown` or `lchown` fails
+    #[inline]
     pub fn chmod_chown(&self) -> Result<()> {
         let Some(metadata) = get_metadata(&self.target)? else {
             return Err(eyre!(
@@ -436,6 +403,93 @@ impl File {
         Ok(())
     }
 
+    /// Copies [`source`][Self::source] to [`target`][Self::target], then
+    /// applies permissions and ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - parent directory cannot be created
+    /// - source path cannot be canonicalized
+    /// - file copy fails
+    #[inline]
+    pub fn copy(&self) -> Result<()> {
+        _ = file_util::mkdir(
+            self.target
+                .parent()
+                .ok_or_eyre("Failed to get parent directory")?,
+        );
+        let Some(ref source) = self.source else {
+            return Err(eyre!("Missing source"));
+        };
+        let source_path = fs::canonicalize(source)?;
+
+        fs::copy(&source_path, &self.target)?;
+        info!(
+            "Copied '{}' -> '{}'",
+            source.display(),
+            &self.target.display(),
+        );
+
+        self.chmod_chown()?;
+        Ok(())
+    }
+
+    /// Removes the file at [`target`][Self::target] if it still matches the
+    /// expected state. No-op for [`Delete`][FileKind::Delete] and
+    /// [`Modify`][FileKind::Modify] kinds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - the file has been modified since activation
+    /// - the target is not the expected type
+    /// - filesystem removal fails
+    #[inline]
+    pub fn deactivate(&self) -> Result<()> {
+        if !self.deactivate.unwrap_or(true) {
+            return Ok(());
+        }
+
+        let Some(metadata) = get_metadata(&self.target)? else {
+            info!("File already deleted '{}'", self.target.display());
+            return Ok(());
+        };
+
+        if !self.check()? {
+            return Err(eyre!("File is not the same as expected"));
+        }
+
+        match self.kind {
+            // no-op on deactivation
+            FileKind::Delete | FileKind::Modify => Ok(()),
+            // deletes only if directory is empty
+            FileKind::Directory if metadata.is_dir() => {
+                fs::remove_dir(&self.target)?;
+                info!("Deleting directory '{}'", self.target.display());
+                Ok(())
+            }
+            FileKind::Directory => Err(eyre!("File is not directory")),
+            // delete only if types match
+            FileKind::Symlink | FileKind::Copy => delete(&self.target, &metadata),
+        }
+    }
+
+    /// Creates [`target`][Self::target] as a directory, then applies
+    /// permissions and ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - directory creation fails
+    /// - permission or ownership changes fail
+    #[inline]
+    pub fn directory(&self) -> Result<()> {
+        mkdir(&self.target)?;
+        self.chmod_chown()?;
+        Ok(())
+    }
+
     /// Creates a symlink at [`target`][Self::target] pointing to
     /// [`source`][Self::source], then applies permissions and ownership.
     ///
@@ -446,6 +500,7 @@ impl File {
     /// - parent directory cannot be created
     /// - source path cannot be canonicalized
     /// - symlink creation fails
+    #[inline]
     pub fn symlink(&self) -> Result<()> {
         _ = file_util::mkdir(
             self.target
@@ -472,51 +527,6 @@ impl File {
         self.chmod_chown()?;
         Ok(())
     }
-
-    /// Copies [`source`][Self::source] to [`target`][Self::target], then
-    /// applies permissions and ownership.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - parent directory cannot be created
-    /// - source path cannot be canonicalized
-    /// - file copy fails
-    pub fn copy(&self) -> Result<()> {
-        _ = file_util::mkdir(
-            self.target
-                .parent()
-                .ok_or_eyre("Failed to get parent directory")?,
-        );
-        let Some(ref source) = self.source else {
-            return Err(eyre!("Missing source"));
-        };
-        let source_path = fs::canonicalize(source)?;
-
-        fs::copy(&source_path, &self.target)?;
-        info!(
-            "Copied '{}' -> '{}'",
-            source.display(),
-            &self.target.display(),
-        );
-
-        self.chmod_chown()?;
-        Ok(())
-    }
-
-    /// Creates [`target`][Self::target] as a directory, then applies
-    /// permissions and ownership.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - directory creation fails
-    /// - permission or ownership changes fail
-    pub fn directory(&self) -> Result<()> {
-        mkdir(&self.target)?;
-        self.chmod_chown()?;
-        Ok(())
-    }
 }
 
 /// Creates `path` as a directory, including any missing parent directories.
@@ -527,6 +537,7 @@ impl File {
 /// Returns an error if:
 /// - the path exists but is not a directory
 /// - directory creation fails
+#[inline]
 pub fn mkdir(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(_) => {
@@ -552,6 +563,7 @@ pub fn mkdir(path: &Path) -> Result<()> {
 /// - the path has no filename or parent component
 /// - an existing file at the destination cannot be deleted
 /// - the rename fails
+#[inline]
 pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
     let Ok(_) = fs::symlink_metadata(path) else {
         return Ok(());
@@ -580,6 +592,7 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
 /// Returns the BLAKE3 hash of the file at `filepath` using memory-mapped I/O,
 /// or `None` if hashing fails.
 #[must_use]
+#[inline]
 pub fn hash_file(filepath: &Path) -> Option<Hash> {
     let mut hasher = blake3::Hasher::new();
 
@@ -595,6 +608,7 @@ pub fn hash_file(filepath: &Path) -> Option<Hash> {
 /// # Errors
 ///
 /// Returns an error if filesystem removal fails.
+#[inline]
 pub fn delete(filepath: &Path, metadata: &Metadata) -> Result<()> {
     if metadata.is_dir() {
         fs::remove_dir_all(filepath)?;
@@ -620,6 +634,7 @@ pub fn get_metadata(path: &Path) -> Result<Option<Metadata>> {
     }
 }
 
+#[allow(clippy::restriction, clippy::pedantic)]
 #[cfg(test)]
 mod tests {
     use super::*;
