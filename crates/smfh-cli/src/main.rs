@@ -54,7 +54,7 @@ fn read_or_exit(path: &Path, impure: bool) -> Manifest {
         Err(e) => handle_read_error(e),
     }
 }
-fn verify(manifest: &Path, impure: bool) -> smfh_core::manifest::Manifest {
+fn verify(manifest: &Path, impure: bool) -> Manifest {
     let m = read_or_exit(manifest, impure);
     let errors = m.verify();
     if !errors.is_empty() {
@@ -66,6 +66,7 @@ fn verify(manifest: &Path, impure: bool) -> smfh_core::manifest::Manifest {
     m
 }
 
+#[expect(clippy::expect_used)]
 fn main() {
     color_eyre::install().expect("Failed to setup color_eyre");
 
@@ -112,10 +113,10 @@ fn main() {
             manifest,
             old_manifest,
         } => {
-            if let Err(e) =
+            if let Err(err) =
                 read_or_exit(&manifest, args.impure).diff(&old_manifest, &prefix, fallback)
             {
-                match e {
+                match err {
                     DiffError::OldManifestMissing => {
                         error!(
                             "Old manifest {} does not exist and `--fallback` is not set",
@@ -125,8 +126,8 @@ fn main() {
                     }
                     DiffError::OldManifestRead(e) => handle_read_error(e),
                     DiffError::ActivationFailed(failures) => {
-                        for (path, err) in &failures {
-                            error!("Failed to activate {}: {err}", path.display());
+                        for (path, e) in &failures {
+                            error!("Failed to activate {}: {e}", path.display());
                         }
                         process::exit(1);
                     }

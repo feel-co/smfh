@@ -15,6 +15,7 @@ use color_eyre::{
 };
 use core::{
     cmp::Ordering,
+    error::Error,
     fmt::{
         self,
         Display,
@@ -24,12 +25,13 @@ use core::{
 /// Error returned by [`Manifest::read`].
 #[derive(Debug)]
 pub enum ReadError {
-    VersionTooNew { manifest: u64 },
     ExpandFailed(color_eyre::Report),
     Io(color_eyre::Report),
+    VersionTooNew { manifest: u64 },
 }
 
 impl Display for ReadError {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::VersionTooNew { manifest } => write!(
@@ -41,7 +43,7 @@ impl Display for ReadError {
     }
 }
 
-impl core::error::Error for ReadError {}
+impl Error for ReadError {}
 
 /// Error returned by [`Manifest::diff`].
 #[derive(Debug)]
@@ -56,6 +58,7 @@ pub enum DiffError {
 }
 
 impl Display for DiffError {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::OldManifestMissing => write!(f, "old manifest does not exist"),
@@ -76,7 +79,7 @@ impl Display for DiffError {
     }
 }
 
-impl core::error::Error for DiffError {}
+impl Error for DiffError {}
 
 /// A single validation violation found by [`Manifest::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +92,7 @@ pub enum Violation {
 
 /// Error returned by [`Manifest::verify`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VerifyError {
     pub target: PathBuf,
     pub kind: FileKind,
@@ -96,6 +100,7 @@ pub struct VerifyError {
 }
 
 impl Display for VerifyError {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self.violation {
             Violation::MissingSource => "requires a source",
@@ -112,7 +117,7 @@ impl Display for VerifyError {
     }
 }
 
-impl core::error::Error for VerifyError {}
+impl Error for VerifyError {}
 
 use log::{
     error,
@@ -174,6 +179,7 @@ fn deserialize_octal<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
 /// Files are ordered by [`kind`](Self::kind) and then by path depth
 /// (shallowest first). See the [`Ord`] implementation for details.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct File {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<PathBuf>,
@@ -201,6 +207,7 @@ pub struct File {
 }
 
 impl Ord for File {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         const fn value(file: &File) -> u8 {
             match file.kind {
@@ -224,6 +231,7 @@ impl Ord for File {
 }
 
 impl PartialOrd for File {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -233,13 +241,14 @@ impl PartialOrd for File {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
-    Directory,
     Copy,
-    Symlink,
-    Modify,
     Delete,
+    Directory,
+    Modify,
+    Symlink,
 }
 impl fmt::Display for FileKind {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let name = match *self {
             Self::Copy => "copy",
@@ -264,6 +273,7 @@ impl Manifest {
     /// - [`ReadError::Io`]: the file cannot be opened or deserialized
     /// - [`ReadError::ExpandFailed`]: shell expansion of a path fails (impure
     ///   mode only)
+    #[inline]
     pub fn read(manifest_path: &Path, impure: bool) -> Result<Self, ReadError> {
         let file = fs::File::open(manifest_path)
             .wrap_err("Failed to open manifest")
@@ -293,15 +303,15 @@ impl Manifest {
         info!("Deserialized manifest: '{}'", manifest_path.display());
 
         if !cfg!(debug_assertions) && !impure {
-            manifest.files.retain(|file| {
-                let absolute = file.target.is_absolute()
-                    && !file.target.components().any(|x| x == Component::ParentDir)
-                    && file.source.as_ref().is_none_or(|x| x.is_absolute());
+            manifest.files.retain(|f| {
+                let absolute = f.target.is_absolute()
+                    && !f.target.components().any(|x| x == Component::ParentDir)
+                    && f.source.as_ref().is_none_or(|x| x.is_absolute());
                 if !absolute {
                     warn!(
                         "{} with target '{}' is not absolute, ignoring.",
-                        file.kind,
-                        file.target.display()
+                        f.kind,
+                        f.target.display()
                     );
                 }
                 absolute
@@ -312,11 +322,11 @@ impl Manifest {
                     .map_err(|err| eyre!("{err:?}"))?
                     .to_path_buf());
             }
-            for file in &mut manifest.files {
-                if let Some(ref src) = file.source.clone() {
-                    file.source = Some(expand(src).map_err(ReadError::ExpandFailed)?);
+            for f in &mut manifest.files {
+                if let Some(ref src) = f.source.clone() {
+                    f.source = Some(expand(src).map_err(ReadError::ExpandFailed)?);
                 }
-                file.target = expand(&file.target.clone()).map_err(ReadError::ExpandFailed)?;
+                f.target = expand(&f.target.clone()).map_err(ReadError::ExpandFailed)?;
             }
         }
 
@@ -339,6 +349,7 @@ impl Manifest {
     /// - [`Violation::UnexpectedIgnoreModification`]: a non-`Copy` file has
     ///   `ignore_modification` set
     #[must_use]
+    #[inline]
     pub fn verify(&self) -> Vec<VerifyError> {
         let mut errors = Vec::new();
         for file in &self.files {
@@ -389,6 +400,7 @@ impl Manifest {
     ///
     /// `prefix` is used when backing up existing files that would be
     /// overwritten. See [`prefix_move`].
+    #[inline]
     pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
@@ -409,6 +421,7 @@ impl Manifest {
     /// dependency order (deletes first, then modifies, symlinks, copies, and
     /// finally directories). Returns per-file failures; the caller decides
     /// whether any failure is fatal.
+    #[inline]
     pub fn deactivate(&mut self) -> Vec<(PathBuf, color_eyre::Report)> {
         self.files.sort();
         let mut failures = Vec::new();
@@ -439,6 +452,7 @@ impl Manifest {
     /// - [`DiffError::OldManifestRead`]: the old manifest exists but cannot be
     ///   read
     /// - [`DiffError::Other`]: probing the old manifest path fails
+    #[inline]
     #[expect(clippy::too_many_lines)]
     pub fn diff(mut self, old_path: &Path, prefix: &str, fallback: bool) -> Result<(), DiffError> {
         let mut old_manifest = match old_path.try_exists() {
@@ -475,6 +489,7 @@ impl Manifest {
                     ..
                 } if target == file.target)
             }) {
+                #[expect(clippy::indexing_slicing)]
                 if &self.files[index] == file {
                     same_files.push(self.files.swap_remove(index));
                 } else {
@@ -593,6 +608,7 @@ impl Manifest {
     }
 }
 
+#[allow(clippy::restriction, clippy::pedantic)]
 #[cfg(test)]
 mod tests {
     use super::*;
