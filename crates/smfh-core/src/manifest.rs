@@ -510,10 +510,15 @@ impl Manifest {
             .collect();
 
         for (old, new) in updated_files {
-            if !old
+            let clobber = new
                 .clobber
-                .unwrap_or_else(|| old_manifest.clobber_by_default.unwrap_or(false))
-            {
+                .unwrap_or_else(|| self.clobber_by_default.unwrap_or(false));
+
+            if !clobber && get_metadata(&new.target).is_ok_and(|metadata| metadata.is_some()) {
+                continue;
+            }
+
+            if !clobber {
                 let file = &old;
 
                 match get_metadata(&old.target) {
@@ -613,6 +618,7 @@ impl Manifest {
 mod tests {
     use super::*;
     use std::{
+        fs,
         io::Write as _,
         path::PathBuf,
     };
@@ -701,6 +707,62 @@ mod tests {
             version: 3,
             impure: false,
         }
+    }
+
+    fn copy_file(source: PathBuf, target: PathBuf, clobber: Option<bool>) -> File {
+        File {
+            source: Some(source),
+            target,
+            kind: FileKind::Copy,
+            clobber,
+            permissions: None,
+            uid: None,
+            gid: None,
+            deactivate: None,
+            follow_symlinks: None,
+            ignore_modification: None,
+        }
+    }
+
+    #[test]
+    fn activate_preserves_existing_copy_when_clobber_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let target = dir.path().join("target");
+        fs::write(&source, b"managed").unwrap();
+        fs::write(&target, b"local").unwrap();
+
+        let mut manifest = manifest_with(vec![copy_file(source, target.clone(), Some(false))]);
+
+        assert!(manifest.activate(".backup-").is_empty());
+        assert_eq!(fs::read(&target).unwrap(), b"local");
+        assert!(!dir.path().join(".backup-target").exists());
+    }
+
+    #[test]
+    fn diff_preserves_existing_copy_when_clobber_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_source = dir.path().join("old-source");
+        let new_source = dir.path().join("new-source");
+        let target = dir.path().join("target");
+        fs::write(&old_source, b"old").unwrap();
+        fs::write(&new_source, b"new").unwrap();
+        fs::write(&target, b"old").unwrap();
+
+        let old_manifest = manifest_with(vec![copy_file(old_source, target.clone(), Some(false))]);
+        let new_manifest = manifest_with(vec![copy_file(new_source, target.clone(), Some(false))]);
+        let old_manifest_path = dir.path().join("old.json");
+        fs::write(
+            &old_manifest_path,
+            serde_json::to_vec(&old_manifest).unwrap(),
+        )
+        .unwrap();
+
+        new_manifest
+            .diff(&old_manifest_path, ".backup-", false)
+            .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert!(!dir.path().join(".backup-target").exists());
     }
 
     #[test]
