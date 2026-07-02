@@ -78,6 +78,14 @@ impl File {
                 .clobber
                 .unwrap_or_else(|| clobber_by_default.unwrap_or(false));
 
+            if !clobber {
+                match self.kind {
+                    FileKind::Copy | FileKind::Symlink => return Ok(()),
+                    FileKind::Directory if !metadata.is_dir() => return Ok(()),
+                    _ => {}
+                }
+            }
+
             if clobber
                 && self
                     .atomic_activate()
