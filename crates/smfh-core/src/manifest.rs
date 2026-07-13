@@ -1,9 +1,6 @@
 use crate::{
     VERSION,
-    file_util::{
-        get_metadata,
-        prefix_move,
-    },
+    file_util::get_metadata,
 };
 use color_eyre::{
     Result,
@@ -50,6 +47,9 @@ impl Error for ReadError {}
 pub enum DiffError {
     OldManifestMissing,
     OldManifestRead(ReadError),
+    /// Existing targets that differ from the old manifest while clobbering is
+    /// disabled.
+    ProtectedTargets(Vec<PathBuf>),
     /// One or more files failed to activate or deactivate. Each entry is the
     /// target path and the formatted error. Returned instead of `Ok(())` so
     /// the manifest rename is skipped and the next run can retry.
@@ -63,6 +63,17 @@ impl Display for DiffError {
         match self {
             Self::OldManifestMissing => write!(f, "old manifest does not exist"),
             Self::OldManifestRead(e) => write!(f, "{e}"),
+            Self::ProtectedTargets(targets) => {
+                write!(
+                    f,
+                    "{} target(s) differ from the old manifest while clobber is disabled:",
+                    targets.len()
+                )?;
+                for target in targets {
+                    write!(f, "\n  {}", target.display())?;
+                }
+                Ok(())
+            }
             Self::ActivationFailed(failures) => {
                 write!(
                     f,
@@ -451,6 +462,8 @@ impl Manifest {
     ///   `fallback` is `false`
     /// - [`DiffError::OldManifestRead`]: the old manifest exists but cannot be
     ///   read
+    /// - [`DiffError::ProtectedTargets`]: an existing target differs from the
+    ///   old manifest while clobbering is disabled
     /// - [`DiffError::Other`]: probing the old manifest path fails
     #[inline]
     #[expect(clippy::too_many_lines)]
@@ -501,66 +514,34 @@ impl Manifest {
             }
         });
 
-        // Remove files in old manifest
-        // which aren't in new manifest
+        let protected_targets: Vec<_> = updated_files
+            .iter()
+            .filter_map(|(old, new)| {
+                let clobber = new
+                    .clobber
+                    .unwrap_or_else(|| self.clobber_by_default.unwrap_or(false));
+
+                (!clobber
+                    && get_metadata(&new.target).is_ok_and(|metadata| metadata.is_some())
+                    && !old.check().unwrap_or(false))
+                .then(|| new.target.clone())
+            })
+            .collect();
+        if !protected_targets.is_empty() {
+            return Err(DiffError::ProtectedTargets(protected_targets));
+        }
+
+        // Remove files in old manifest which aren't in new manifest.
         let mut failures: Vec<(PathBuf, String)> = old_manifest
             .deactivate()
             .into_iter()
             .map(|(p, e)| (p, format!("{e:?}")))
             .collect();
 
-        for (old, new) in updated_files {
+        for (_, new) in updated_files {
             let clobber = new
                 .clobber
                 .unwrap_or_else(|| self.clobber_by_default.unwrap_or(false));
-
-            if !clobber && get_metadata(&new.target).is_ok_and(|metadata| metadata.is_some()) {
-                continue;
-            }
-
-            if !clobber {
-                let file = &old;
-
-                match get_metadata(&old.target) {
-                    Err(err) => {
-                        warn!(
-                            "Failed to get metadata for file '{}'\n{:?}",
-                            old.target.display(),
-                            err
-                        );
-                        continue;
-                    }
-                    Ok(Some(_)) => {
-                        if !file
-                            .check()
-                            .inspect_err(|err| {
-                                warn!(
-                                    "Failed to check file: '{}', assuming file is incorrect\n{:?}",
-                                    file.target.display(),
-                                    err
-                                );
-                            })
-                            .unwrap_or(false)
-                        {
-                            if let Err(err) = prefix_move(&file.target, prefix) {
-                                warn!(
-                                    "Failed to backup file '{}'\n{:?}",
-                                    file.target.display(),
-                                    err
-                                );
-                            }
-                            // if file existed but was wrong,
-                            // atomic action cannot be taken
-                            // so there's no point of forcing clobber
-
-                            // except this double checks
-                            self.files.push(new.clone());
-                            continue;
-                        }
-                    }
-                    Ok(None) => {}
-                }
-            }
 
             let mut atomic = new.clone();
 
@@ -592,6 +573,10 @@ impl Manifest {
                 );
             });
             if !res.unwrap_or(false) {
+                let mut new = new;
+                if !clobber {
+                    new.clobber = Some(true);
+                }
                 self.files.push(new);
             }
         }
@@ -724,6 +709,21 @@ mod tests {
         }
     }
 
+    fn symlink_file(source: PathBuf, target: PathBuf, clobber: Option<bool>) -> File {
+        File {
+            source: Some(source),
+            target,
+            kind: FileKind::Symlink,
+            clobber,
+            permissions: None,
+            uid: None,
+            gid: None,
+            deactivate: None,
+            follow_symlinks: None,
+            ignore_modification: None,
+        }
+    }
+
     #[test]
     fn activate_preserves_existing_copy_when_clobber_false() {
         let dir = tempfile::tempdir().unwrap();
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_preserves_existing_copy_when_clobber_false() {
+    fn diff_updates_managed_copy_when_clobber_false() {
         let dir = tempfile::tempdir().unwrap();
         let old_source = dir.path().join("old-source");
         let new_source = dir.path().join("new-source");
@@ -761,8 +761,67 @@ mod tests {
         new_manifest
             .diff(&old_manifest_path, ".backup-", false)
             .unwrap();
-        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert_eq!(fs::read(&target).unwrap(), b"new");
         assert!(!dir.path().join(".backup-target").exists());
+    }
+
+    #[test]
+    fn diff_updates_managed_symlink_when_clobber_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_source = dir.path().join("old-source");
+        let new_source = dir.path().join("new-source");
+        let target = dir.path().join("target");
+        fs::write(&old_source, b"old").unwrap();
+        fs::write(&new_source, b"new").unwrap();
+        std::os::unix::fs::symlink(&old_source, &target).unwrap();
+
+        let old_manifest =
+            manifest_with(vec![symlink_file(old_source, target.clone(), Some(false))]);
+        let new_manifest = manifest_with(vec![symlink_file(
+            new_source.clone(),
+            target.clone(),
+            Some(false),
+        )]);
+        let old_manifest_path = dir.path().join("old.json");
+        fs::write(
+            &old_manifest_path,
+            serde_json::to_vec(&old_manifest).unwrap(),
+        )
+        .unwrap();
+
+        new_manifest
+            .diff(&old_manifest_path, ".backup-", false)
+            .unwrap();
+        assert_eq!(
+            fs::canonicalize(&target).unwrap(),
+            fs::canonicalize(new_source).unwrap()
+        );
+    }
+
+    #[test]
+    fn diff_rejects_modified_copy_when_clobber_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_source = dir.path().join("old-source");
+        let new_source = dir.path().join("new-source");
+        let target = dir.path().join("target");
+        fs::write(&old_source, b"old").unwrap();
+        fs::write(&new_source, b"new").unwrap();
+        fs::write(&target, b"local").unwrap();
+
+        let old_manifest = manifest_with(vec![copy_file(old_source, target.clone(), Some(false))]);
+        let new_manifest = manifest_with(vec![copy_file(new_source, target.clone(), Some(false))]);
+        let old_manifest_path = dir.path().join("old.json");
+        fs::write(
+            &old_manifest_path,
+            serde_json::to_vec(&old_manifest).unwrap(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            new_manifest.diff(&old_manifest_path, ".backup-", false),
+            Err(DiffError::ProtectedTargets(targets)) if targets == vec![target.clone()]
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"local");
     }
 
     #[test]
