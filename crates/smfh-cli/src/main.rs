@@ -125,6 +125,15 @@ fn main() {
                         process::exit(3);
                     }
                     DiffError::OldManifestRead(e) => handle_read_error(e),
+                    DiffError::ProtectedTargets(targets) => {
+                        for target in &targets {
+                            error!(
+                                "Refusing to replace modified target while clobber is disabled: {}",
+                                target.display()
+                            );
+                        }
+                        process::exit(1);
+                    }
                     DiffError::ActivationFailed(failures) => {
                         for (path, e) in &failures {
                             error!("Failed to activate {}: {e}", path.display());
