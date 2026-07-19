@@ -1,6 +1,9 @@
 use crate::{
     VERSION,
-    file_util::get_metadata,
+    file_util::{
+        get_metadata,
+        is_dangling_symlink,
+    },
 };
 use color_eyre::{
     Result,
@@ -569,10 +572,21 @@ impl Manifest {
                     .clobber
                     .unwrap_or_else(|| self.clobber_by_default.unwrap_or(false));
 
-                (!clobber
-                    && get_metadata(&new.target).is_ok_and(|metadata| metadata.is_some())
-                    && !old.check().unwrap_or(false))
-                .then(|| new.target.clone())
+                if clobber {
+                    return None;
+                }
+
+                let Ok(Some(metadata)) = get_metadata(&new.target) else {
+                    return None;
+                };
+
+                // A dangling symlink holds no user content worth
+                // protecting; it is repaired instead of refused.
+                if is_dangling_symlink(&new.target, &metadata) {
+                    return None;
+                }
+
+                (!old.check().unwrap_or(false)).then(|| new.target.clone())
             })
             .collect();
         if !protected_targets.is_empty() {
@@ -844,6 +858,66 @@ mod tests {
             fs::canonicalize(&target).unwrap(),
             fs::canonicalize(new_source).unwrap()
         );
+    }
+
+    #[test]
+    fn diff_repairs_dangling_symlink_when_clobber_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        let missing = dir.path().join("missing");
+        let target = dir.path().join("target");
+        fs::write(&source, b"managed").unwrap();
+        std::os::unix::fs::symlink(&missing, &target).unwrap();
+
+        let old_manifest =
+            manifest_with(vec![symlink_file(source.clone(), target.clone(), Some(false))]);
+        let new_manifest =
+            manifest_with(vec![symlink_file(source.clone(), target.clone(), Some(false))]);
+        let old_manifest_path = dir.path().join("old.json");
+        fs::write(
+            &old_manifest_path,
+            serde_json::to_vec(&old_manifest).unwrap(),
+        )
+        .unwrap();
+
+        new_manifest
+            .diff(&old_manifest_path, ".backup-", false)
+            .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"managed");
+        assert_eq!(fs::read_link(&target).unwrap(), source);
+        assert!(!dir.path().join(".backup-target").exists());
+    }
+
+    #[test]
+    fn diff_repairs_dangling_symlink_when_source_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_source = dir.path().join("old-source");
+        let new_source = dir.path().join("new-source");
+        let target = dir.path().join("target");
+        fs::write(&old_source, b"old").unwrap();
+        fs::write(&new_source, b"new").unwrap();
+        std::os::unix::fs::symlink(&old_source, &target).unwrap();
+        // Simulate the old source vanishing (e.g. garbage collection).
+        fs::remove_file(&old_source).unwrap();
+
+        let old_manifest =
+            manifest_with(vec![symlink_file(old_source, target.clone(), Some(false))]);
+        let new_manifest = manifest_with(vec![symlink_file(
+            new_source.clone(),
+            target.clone(),
+            Some(false),
+        )]);
+        let old_manifest_path = dir.path().join("old.json");
+        fs::write(
+            &old_manifest_path,
+            serde_json::to_vec(&old_manifest).unwrap(),
+        )
+        .unwrap();
+
+        new_manifest
+            .diff(&old_manifest_path, ".backup-", false)
+            .unwrap();
+        assert_eq!(fs::read_link(&target).unwrap(), new_source);
     }
 
     #[test]
