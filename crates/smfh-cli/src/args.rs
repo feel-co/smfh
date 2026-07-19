@@ -59,4 +59,8 @@ pub enum Subcommands {
         #[arg()]
         manifest: PathBuf,
     },
+    Merge {
+        #[arg(value_delimiter = ',')]
+        manifests: Vec<PathBuf>,
+    },
 }

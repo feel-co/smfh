@@ -218,6 +218,11 @@ etc.). Exits with code 3 if errors are found.
 Reads the manifest, verifies it, and prints a normalized JSON representation.
 Useful for reformatting manifests or checking that they parse correctly.
 
+### `merge`
+
+Reads a list of manifests, folds the entries from right to left
+and prints the normalized JSON representation.
+
 ## Exit codes
 
 | Code | Meaning                                            |

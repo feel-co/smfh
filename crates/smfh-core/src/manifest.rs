@@ -144,6 +144,7 @@ use serde::{
 use serde_json::Value;
 use shellexpand::path::full as shellexpand;
 use std::{
+    collections::HashMap,
     fs::{
         self,
     },
@@ -164,8 +165,55 @@ fn is_true(t: &Option<bool>) -> bool {
     t.is_none_or(|x| x)
 }
 
+trait Merge {
+    fn merge(&mut self, other: &Self);
+}
+
+impl<T: Clone> Merge for Option<T> {
+    fn merge(&mut self, other: &Self) {
+        if other.is_some() {
+            self.clone_from(other);
+        }
+    }
+}
+#[inline]
+/// Merges a list of [`manifest's`][Manifest] [`.file`][File] entries.
+/// Right hand side overrides left
+/// Not a deep merge only entire entries are overridden .
+///
+/// # Errors
+///
+///  Returns an error if:
+///
+///  - The Vec passed is empty
+pub fn merge_files_from_manifests(manifests: Vec<Manifest>) -> Result<Manifest> {
+    let right_most: &mut Manifest =
+        &mut manifests.last().ok_or_eyre("No manifests passed!")?.clone();
+    let mut map: HashMap<String, File> = HashMap::new();
+
+    for m in manifests {
+        for f in m.files {
+            let key = format!("{}-{}", f.kind, f.target.to_string_lossy());
+            map.entry(key)
+                .and_modify(|inner_file| {
+                    inner_file.source.merge(&f.source);
+                    inner_file.clobber.merge(&f.clobber);
+                    inner_file.permissions.merge(&f.permissions);
+                    inner_file.uid.merge(&f.uid);
+                    inner_file.gid.merge(&f.gid);
+                    inner_file.deactivate.merge(&f.deactivate);
+                    inner_file.follow_symlinks.merge(&f.follow_symlinks);
+                    inner_file.ignore_modification.merge(&f.ignore_modification);
+                })
+                .or_insert(f.clone());
+        }
+    }
+    right_most.files = map.into_values().collect();
+    Ok(right_most.to_owned())
+}
+
 /// Deserialized representation of a smfh manifest file.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Manifest {
     pub files: Vec<File>,
     #[serde(skip_serializing_if = "is_false")]
@@ -573,11 +621,11 @@ impl Manifest {
                 );
             });
             if !res.unwrap_or(false) {
-                let mut new = new;
+                let mut mut_new = new;
                 if !clobber {
-                    new.clobber = Some(true);
+                    mut_new.clobber = Some(true);
                 }
-                self.files.push(new);
+                self.files.push(mut_new);
             }
         }
 

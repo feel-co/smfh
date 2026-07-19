@@ -22,12 +22,28 @@ use smfh_core::{
         DiffError,
         Manifest,
         ReadError,
+        merge_files_from_manifests,
     },
 };
 use std::{
     path::Path,
-    process,
+    process::{
+        self,
+    },
 };
+
+fn print_manifest(manifest: &Manifest) {
+    let mut ordered = manifest.clone();
+    ordered.files.sort();
+    match serde_json::to_string_pretty(&ordered) {
+        #[expect(clippy::print_stdout)]
+        Ok(s) => println!("{s}"),
+        Err(e) => {
+            error!("{e:?}");
+            process::exit(1);
+        }
+    }
+}
 
 fn handle_read_error(err: ReadError) -> ! {
     match err {
@@ -152,13 +168,18 @@ fn main() {
             info!("Manifest '{}' is valid", manifest.display());
         }
         Subcommands::Clean { manifest } => {
-            let m = verify(&manifest, args.impure);
-            match serde_json::to_string_pretty(&m) {
-                #[expect(clippy::print_stdout)]
-                Ok(s) => println!("{s}"),
+            print_manifest(&verify(&manifest, args.impure));
+        }
+        Subcommands::Merge { manifests } => {
+            let deserialized_manifests = manifests
+                .iter()
+                .map(|m| read_or_exit(m, args.impure))
+                .collect();
+            match merge_files_from_manifests(deserialized_manifests) {
+                Ok(m) => print_manifest(&m),
                 Err(e) => {
-                    error!("{e:?}");
-                    process::exit(1);
+                    error!("{e}");
+                    process::exit(3);
                 }
             }
         }
