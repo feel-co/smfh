@@ -44,7 +44,7 @@ pedantic = { level = "warn", priority = -1 }
 
 blanket_clippy_restriction_lints = "allow"
 # turn this on for more pain
-#restriction = { level = "warn", priority = -1 }
+restriction = { level = "warn", priority = -1 }
 
 allow_attributes_without_reason = "allow"
 question_mark_used = "allow"
