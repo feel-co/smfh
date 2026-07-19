@@ -78,7 +78,13 @@ impl File {
                 .clobber
                 .unwrap_or_else(|| clobber_by_default.unwrap_or(false));
 
-            if !clobber {
+            // A dangling symlink holds no user content worth protecting
+            // (e.g. its link target was a garbage-collected store path),
+            // so it is repaired even when clobbering is disabled.
+            let repair_broken_link = matches!(self.kind, FileKind::Copy | FileKind::Symlink)
+                && is_dangling_symlink(&self.target, &metadata);
+
+            if !clobber && !repair_broken_link {
                 match self.kind {
                     FileKind::Copy | FileKind::Symlink => return Ok(()),
                     FileKind::Directory if !metadata.is_dir() => return Ok(()),
@@ -94,7 +100,10 @@ impl File {
                 return Ok(());
             }
 
-            if match *self {
+            if repair_broken_link {
+                // Nothing worth backing up; drop the broken link.
+                delete(&self.target, &metadata)?;
+            } else if match *self {
                 Self {
                     kind: FileKind::Modify,
                     ..
@@ -640,6 +649,15 @@ pub fn get_metadata(path: &Path) -> Result<Option<Metadata>> {
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err).wrap_err("While getting metadata"),
     }
+}
+
+/// Returns `true` if `target` is a symlink whose link target no longer
+/// exists (e.g. a garbage-collected Nix store path).
+#[inline]
+#[must_use]
+pub fn is_dangling_symlink(target: &Path, metadata: &Metadata) -> bool {
+    metadata.is_symlink()
+        && fs::metadata(target).is_err_and(|err| err.kind() == ErrorKind::NotFound)
 }
 
 #[allow(clippy::restriction, clippy::pedantic)]
