@@ -18,7 +18,7 @@ The main types are:
 - [`FileWithMetadata`](src/file_util.rs) is a `File` paired with live filesystem
   metadata. Performs the actual activation, deactivation, and integrity checks.
 
-[docs.rs]: https://docs.rs/smfh/1.6.0/smfh
+[docs.rs]: https://docs.rs/smfh/1.7.0/smfh
 
 Module documentation can also be found on [docs.rs]. Contributions regarding
 library documentation and testing are welcome.
