@@ -191,13 +191,12 @@ impl<T: Clone> Merge for Option<T> {
 ///  - The Vec passed is empty
 pub fn merge_files_from_manifests(manifests: Vec<Manifest>) -> Result<Manifest> {
     let right_most: &mut Manifest =
-        &mut manifests.last().ok_or_eyre("No manifests passed!")?.clone();
-    let mut map: HashMap<String, File> = HashMap::new();
+        &mut manifests.last().ok_or_eyre("No manifests passed")?.clone();
+    let mut map: HashMap<(FileKind, PathBuf), File> = HashMap::new();
 
     for m in manifests {
         for f in m.files {
-            let key = format!("{}-{}", f.kind, f.target.to_string_lossy());
-            map.entry(key)
+            map.entry((f.kind, f.target.clone()))
                 .and_modify(|inner_file| {
                     inner_file.source.merge(&f.source);
                     inner_file.clobber.merge(&f.clobber);
@@ -208,7 +207,7 @@ pub fn merge_files_from_manifests(manifests: Vec<Manifest>) -> Result<Manifest> 
                     inner_file.follow_symlinks.merge(&f.follow_symlinks);
                     inner_file.ignore_modification.merge(&f.ignore_modification);
                 })
-                .or_insert(f.clone());
+                .or_insert(f);
         }
     }
     right_most.files = map.into_values().collect();
@@ -300,7 +299,7 @@ impl PartialOrd for File {
 }
 
 /// The operation smfh performs for a given [`File`].
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum FileKind {
     Copy,
@@ -869,10 +868,16 @@ mod tests {
         fs::write(&source, b"managed").unwrap();
         std::os::unix::fs::symlink(&missing, &target).unwrap();
 
-        let old_manifest =
-            manifest_with(vec![symlink_file(source.clone(), target.clone(), Some(false))]);
-        let new_manifest =
-            manifest_with(vec![symlink_file(source.clone(), target.clone(), Some(false))]);
+        let old_manifest = manifest_with(vec![symlink_file(
+            source.clone(),
+            target.clone(),
+            Some(false),
+        )]);
+        let new_manifest = manifest_with(vec![symlink_file(
+            source.clone(),
+            target.clone(),
+            Some(false),
+        )]);
         let old_manifest_path = dir.path().join("old.json");
         fs::write(
             &old_manifest_path,
