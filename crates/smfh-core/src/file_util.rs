@@ -84,14 +84,6 @@ impl File {
             let repair_broken_link = matches!(self.kind, FileKind::Copy | FileKind::Symlink)
                 && is_dangling_symlink(&self.target, &metadata);
 
-            if !clobber && !repair_broken_link {
-                match self.kind {
-                    FileKind::Copy | FileKind::Symlink => return Ok(()),
-                    FileKind::Directory if !metadata.is_dir() => return Ok(()),
-                    _ => {}
-                }
-            }
-
             if clobber
                 && self
                     .atomic_activate()
