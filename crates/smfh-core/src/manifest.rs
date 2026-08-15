@@ -786,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn activate_preserves_existing_copy_when_clobber_false() {
+    fn activate_prefix_moves_existing_copy_when_clobber_false() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source");
         let target = dir.path().join("target");
@@ -796,8 +796,8 @@ mod tests {
         let mut manifest = manifest_with(vec![copy_file(source, target.clone(), Some(false))]);
 
         assert!(manifest.activate(".backup-").is_empty());
-        assert_eq!(fs::read(&target).unwrap(), b"local");
-        assert!(!dir.path().join(".backup-target").exists());
+        assert_eq!(fs::read(&target).unwrap(), b"managed");
+        assert!(dir.path().join(".backup-target").exists());
     }
 
     #[test]
