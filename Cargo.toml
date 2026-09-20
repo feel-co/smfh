@@ -1,32 +1,32 @@
 [workspace]
-members = ["crates/*"]
+members  = [ "crates/*" ]
 resolver = "3"
 
 [workspace.package]
-version = "1.7.1"
-edition = "2024"
-readme = true
+version     = "1.7.1"
+edition     = "2024"
+readme      = true
 description = "Sleek Manifest File Handler"
-license = "AGPL-3.0-only"
-repository = "https://github.com/feel-co/smfh"
+license     = "AGPL-3.0-only"
+repository  = "https://github.com/feel-co/smfh"
 
 [workspace.dependencies]
 # NOTE: We need to specify the version of smfh-core here because crates.io
 # requires all dependencies to have a version number. Without this, smfh
 # cannot be published. Since smfh *does* follow the workspace version, it's
 # a good idea to bump this version as you bump the one under workspace.package
-smfh-core = { path = "./crates/smfh-core", version = "1.5.0" }
+smfh-core = { path = "./crates/smfh-core", version = "1.7.1" }
 
-blake3 = { version = "1.8.7", features = ["mmap"] }
-clap = { version = "4.6.6", features = ["derive"] }
-color-eyre = "0.6.5"
-log = "0.4.34"
-rand = "0.10.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-shellexpand = { version = "3.1.2", features = ["full", "path"] }
-simplelog = "0.12.2"
-tempfile = "3.27.0"
+blake3      = { version = "1.8.7", features = [ "mmap" ] }
+clap        = { version = "4.6.6", features = [ "derive" ] }
+color-eyre  = "0.6.5"
+log         = "0.4.34"
+rand        = "0.10.2"
+serde       = { version = "1.0.229", features = [ "derive" ] }
+serde_json  = "1.0.151"
+shellexpand = { version = "3.1.2", features = [ "full", "path" ] }
+simplelog   = "0.12.2"
+tempfile    = "3.27.0"
 
 # Always optimize blake3. Its SIMD assembly is 100x faster than
 # unoptimized Rust.
@@ -34,10 +34,10 @@ tempfile = "3.27.0"
 opt-level = 3
 
 [profile.release]
-strip = true
-opt-level = 3
-lto = "fat"
 codegen-units = 1
+lto           = "thin"
+opt-level     = 3
+strip         = true
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -47,17 +47,17 @@ blanket_clippy_restriction_lints = "allow"
 #restriction = { level = "warn", priority = -1 }
 
 allow_attributes_without_reason = "allow"
-question_mark_used = "allow"
-exit = "allow"
-ref_patterns = "allow"
-partial_pub_fields = "allow"
-else_if_without_else = "allow"
-implicit_return = "allow"
-missing_trait_methods = "allow"
-arbitrary_source_item_ordering = "allow"
-missing_docs_in_private_items = "allow"
-pattern_type_mismatch = "allow"
-single_call_fn = "allow"
-wildcard_enum_match_arm = "allow"
-min_ident_chars = "allow"
-exhaustive_enums = "allow"
+arbitrary_source_item_ordering  = "allow"
+else_if_without_else            = "allow"
+exhaustive_enums                = "allow"
+exit                            = "allow"
+implicit_return                 = "allow"
+min_ident_chars                 = "allow"
+missing_docs_in_private_items   = "allow"
+missing_trait_methods           = "allow"
+partial_pub_fields              = "allow"
+pattern_type_mismatch           = "allow"
+question_mark_used              = "allow"
+ref_patterns                    = "allow"
+single_call_fn                  = "allow"
+wildcard_enum_match_arm         = "allow"
