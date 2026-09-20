@@ -1,66 +1,52 @@
-use clap::{
-    Parser,
-    Subcommand,
-};
+use pound::Parse;
 use std::path::PathBuf;
 
-#[derive(Parser, Debug)]
-#[command(version, about)]
+#[derive(Parse, Debug)]
+#[pound(name = "smfh", version = "1.7.1")]
 pub struct Args {
-    #[arg(short, long)]
+    #[pound(short, long)]
     pub verbose: bool,
 
-    #[arg(
+    #[pound(
         long,
-        default_value = "false",
+        default = "false",
         help = "Allows use of relative paths and environment variable substitutions in paths"
     )]
     pub impure: bool,
 
-    #[command(subcommand)]
+    #[pound(subcommand)]
     pub sub_command: Subcommands,
 }
 
-#[derive(Subcommand, Clone, Debug)]
+#[derive(Parse, Clone, Debug)]
 pub enum Subcommands {
     Activate {
-        #[arg()]
         manifest: PathBuf,
-
-        #[clap(long, short, action, default_value = ".backup-")]
+        #[pound(short, long, default = ".backup-")]
         prefix: String,
     },
     Deactivate {
-        #[arg()]
         manifest: PathBuf,
     },
     Diff {
-        #[clap(long, short, action, default_value = ".backup-")]
+        #[pound(short, long, default = ".backup-")]
         prefix: String,
-
-        #[arg(
+        #[pound(
             long,
-            default_value = "false",
+            default = "false",
             help = "Continue with activation if old_manifest doesn't exist"
         )]
         fallback: bool,
-
-        #[arg()]
         manifest: PathBuf,
-
-        #[arg()]
         old_manifest: PathBuf,
     },
     Verify {
-        #[arg()]
         manifest: PathBuf,
     },
     Clean {
-        #[arg()]
         manifest: PathBuf,
     },
     Merge {
-        #[arg(value_delimiter = ',')]
         manifests: Vec<PathBuf>,
     },
 }

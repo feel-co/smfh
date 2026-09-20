@@ -4,11 +4,11 @@ use args::{
     Args,
     Subcommands,
 };
-use clap::Parser as _;
 use log::{
     error,
     info,
 };
+use pound::Parse as _;
 use simplelog::{
     ColorChoice,
     Config,
