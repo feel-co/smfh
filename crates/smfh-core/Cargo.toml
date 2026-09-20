@@ -12,7 +12,7 @@ categories = ["filesystem"]
 
 [dependencies]
 blake3.workspace = true
-color-eyre.workspace = true
+misstep.workspace = true
 log.workspace = true
 rand.workspace = true
 serde.workspace = true

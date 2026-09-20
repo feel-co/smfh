@@ -3,14 +3,6 @@ use crate::{
     manifest,
 };
 use blake3::Hash;
-use color_eyre::{
-    Result,
-    eyre::{
-        Context as _,
-        OptionExt as _,
-        eyre,
-    },
-};
 use core::result::Result::Ok;
 use log::{
     info,
@@ -19,6 +11,12 @@ use log::{
 use manifest::{
     File,
     FileKind,
+};
+use misstep::{
+    OptionExt as _,
+    Result,
+    ResultExt as _,
+    report,
 };
 use rand::distr::{
     Alphanumeric,
@@ -87,7 +85,7 @@ impl File {
             if clobber
                 && self
                     .atomic_activate()
-                    .wrap_err("While attempting atomic activation")?
+                    .context("While attempting atomic activation")?
             {
                 return Ok(());
             }
@@ -166,7 +164,7 @@ impl File {
         };
 
         let Some(ref source) = self.source else {
-            return Err(eyre!("Missing source"));
+            return Err(report!("Missing source"));
         };
 
         let target_is_dir = metadata.is_dir();
@@ -234,7 +232,7 @@ impl File {
                 kind: FileKind::Symlink | FileKind::Copy,
                 ref target,
                 ..
-            } => Err(eyre!("File '{}' missing_source", target.display())),
+            } => Err(report!("File '{}' missing_source", target.display())),
             Self {
                 kind: FileKind::Copy,
                 ..
@@ -365,7 +363,7 @@ impl File {
     #[inline]
     pub fn chmod_chown(&self) -> Result<()> {
         let Some(metadata) = get_metadata(&self.target)? else {
-            return Err(eyre!(
+            return Err(report!(
                 "Can't modify file '{}', file does not exist",
                 self.target.display()
             ));
@@ -426,10 +424,10 @@ impl File {
         _ = file_util::mkdir(
             self.target
                 .parent()
-                .ok_or_eyre("Failed to get parent directory")?,
+                .context("Failed to get parent directory")?,
         );
         let Some(ref source) = self.source else {
-            return Err(eyre!("Missing source"));
+            return Err(report!("Missing source"));
         };
         let source_path = fs::canonicalize(source)?;
 
@@ -466,7 +464,7 @@ impl File {
         };
 
         if !self.check()? {
-            return Err(eyre!("File is not the same as expected"));
+            return Err(report!("File is not the same as expected"));
         }
 
         match self.kind {
@@ -478,7 +476,7 @@ impl File {
                 info!("Deleting directory '{}'", self.target.display());
                 Ok(())
             }
-            FileKind::Directory => Err(eyre!("File is not directory")),
+            FileKind::Directory => Err(report!("File is not directory")),
             // delete only if types match
             FileKind::Symlink | FileKind::Copy => delete(&self.target, &metadata),
         }
@@ -514,10 +512,10 @@ impl File {
         _ = file_util::mkdir(
             self.target
                 .parent()
-                .ok_or_eyre("Failed to get parent directory")?,
+                .context("Failed to get parent directory")?,
         );
         let Some(ref source) = self.source else {
-            return Err(eyre!("Missing source"));
+            return Err(report!("Missing source"));
         };
 
         let source_path = if self.follow_symlinks.unwrap_or(true) {
@@ -555,7 +553,7 @@ pub fn mkdir(path: &Path) -> Result<()> {
         }
         Ok(x) => {
             if !x.is_dir() {
-                return Err(eyre!("File in way of '{}'", path.display()));
+                return Err(report!("File in way of '{}'", path.display()));
             }
             info!("Directory '{}' already exists", path.display());
         }
@@ -579,14 +577,14 @@ pub fn prefix_move(path: &Path, prefix: &str) -> Result<()> {
     };
 
     let mut appended_path = OsString::from(prefix);
-    appended_path.push(path.file_name().ok_or_eyre(format!(
+    appended_path.push(path.file_name().context(format!(
         "Failed to get file name of file '{}'",
         path.display()
     ))?);
 
     let new_path = path
         .parent()
-        .ok_or_eyre(format!("Failed to get parent of file '{}'", path.display()))?
+        .context(format!("Failed to get parent of file '{}'", path.display()))?
         .join(PathBuf::from(appended_path));
 
     if let Ok(metadata) = fs::symlink_metadata(&new_path) {
@@ -639,7 +637,7 @@ pub fn get_metadata(path: &Path) -> Result<Option<Metadata>> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => Ok(Some(metadata)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(err).wrap_err("While getting metadata"),
+        Err(err) => Err(err).context("While getting metadata"),
     }
 }
 

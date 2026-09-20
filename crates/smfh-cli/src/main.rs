@@ -82,10 +82,7 @@ fn verify(manifest: &Path, impure: bool) -> Manifest {
     m
 }
 
-#[expect(clippy::expect_used)]
 fn main() {
-    color_eyre::install().expect("Failed to setup color_eyre");
-
     let args = Args::parse();
 
     let level = if args.verbose {
