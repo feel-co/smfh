@@ -91,11 +91,25 @@ If `ignore_modification` is set, content checks are skipped.
 
 All filesystem errors are wrapped with [`color-eyre`] for context.
 
+### Base directories
+
+A manifest can provide base directories for resolving relative paths.
+`source_base_dir` takes precedence over `base_dir` for sources, and
+`target_base_dir` takes precedence over `base_dir` for targets. Absolute paths
+are unchanged.
+
+Base directory fields must contain absolute paths. They are applied when the
+manifest is read. If no applicable base directory is provided, relative paths
+follow the behavior described below.
+
 ### Impure mode
 
 In pure mode (default), only absolute paths without `..` components are
 accepted; relative paths are silently discarded. In impure mode, paths are
 shell-expanded via `shellexpand` and relative paths are allowed.
+
+When no manifest base directory applies, relative paths in impure mode are
+resolved from the current working directory.
 
 ## License
 

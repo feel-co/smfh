@@ -42,4 +42,4 @@ pub mod manifest;
 /// The current manifest format version supported by this library. Manifests
 /// with a `version` field higher than this are rejected at read
 /// time with [`ReadError::VersionTooNew`](crate::manifest::ReadError::VersionTooNew).
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;

@@ -26,6 +26,7 @@ use core::{
 #[derive(Debug)]
 pub enum ReadError {
     ExpandFailed(color_eyre::Report),
+    InvalidBaseDir { field: String, path: PathBuf },
     Io(color_eyre::Report),
     VersionTooNew { manifest: u64 },
 }
@@ -38,6 +39,9 @@ impl Display for ReadError {
                 f,
                 "manifest version too new: program {VERSION}, manifest {manifest}"
             ),
+            Self::InvalidBaseDir { field, path } => {
+                write!(f, "{field} must be an absolute path: '{}'", path.display())
+            }
             Self::ExpandFailed(e) | Self::Io(e) => write!(f, "{e}"),
         }
     }
@@ -218,6 +222,12 @@ pub fn merge_files_from_manifests(manifests: Vec<Manifest>) -> Result<Manifest> 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Manifest {
     pub files: Vec<File>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_base_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_base_dir: Option<PathBuf>,
     #[serde(skip_serializing_if = "is_false")]
     pub clobber_by_default: Option<bool>,
     pub version: u64,
@@ -360,6 +370,48 @@ impl Manifest {
         let mut manifest: Self = serde_json::from_value(root)
             .wrap_err("Failed to deserialize manifest")
             .map_err(ReadError::Io)?;
+
+        for (field, base_dir) in [
+            ("base_dir", &manifest.base_dir),
+            ("source_base_dir", &manifest.source_base_dir),
+            ("target_base_dir", &manifest.target_base_dir),
+        ] {
+            if let Some(path) = base_dir
+                && !path.is_absolute()
+            {
+                return Err(ReadError::InvalidBaseDir {
+                    field: field.to_owned(),
+                    path: path.clone(),
+                });
+            }
+        }
+
+        let source_base_dir = manifest
+            .source_base_dir
+            .as_ref()
+            .or(manifest.base_dir.as_ref());
+        let target_base_dir = manifest
+            .target_base_dir
+            .as_ref()
+            .or(manifest.base_dir.as_ref());
+
+        if let Some(base_dir) = source_base_dir {
+            for file in &mut manifest.files {
+                if let Some(source) = &mut file.source
+                    && source.is_relative()
+                {
+                    *source = base_dir.join(&*source);
+                }
+            }
+        }
+
+        if let Some(base_dir) = target_base_dir {
+            for file in &mut manifest.files {
+                if file.target.is_relative() {
+                    file.target = base_dir.join(&file.target);
+                }
+            }
+        }
 
         info!("Deserialized manifest: '{}'", manifest_path.display());
 
@@ -708,6 +760,64 @@ mod tests {
     }
 
     #[test]
+    fn read_resolves_relative_paths_from_base_dirs() {
+        let f = write_manifest(
+            r#"{
+                "files": [{
+                    "type": "symlink",
+                    "source": "dotfiles/test.txt",
+                    "target": "/tmp/test.txt"
+                }],
+                "base_dir": "/repo",
+                "version": 4
+            }"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(
+            m.files[0].source,
+            Some(PathBuf::from("/repo/dotfiles/test.txt"))
+        );
+    }
+
+    #[test]
+    fn specific_base_dirs_override_base_dir() {
+        let f = write_manifest(
+            r#"{
+                "files": [{
+                    "type": "symlink",
+                    "source": "source.txt",
+                    "target": "target.txt"
+                }],
+                "base_dir": "/base",
+                "source_base_dir": "/sources",
+                "target_base_dir": "/targets",
+                "version": 4
+            }"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(
+            m.files[0].source,
+            Some(PathBuf::from("/sources/source.txt"))
+        );
+        assert_eq!(m.files[0].target, PathBuf::from("/targets/target.txt"));
+    }
+
+    #[test]
+    fn read_rejects_relative_base_dir() {
+        let f = write_manifest(
+            r#"{
+                "files": [],
+                "base_dir": "repo",
+                "version": 4
+            }"#,
+        );
+        assert!(matches!(
+            Manifest::read(f.path(), false),
+            Err(ReadError::InvalidBaseDir { .. })
+        ));
+    }
+
+    #[test]
     fn read_parses_octal_permissions() {
         let f = write_manifest(
             r#"{"files":[{"type":"directory","target":"/tmp/x","permissions":"755"}],"version":3}"#,
@@ -749,6 +859,9 @@ mod tests {
     fn manifest_with(files: Vec<File>) -> Manifest {
         Manifest {
             files,
+            base_dir: None,
+            source_base_dir: None,
+            target_base_dir: None,
             clobber_by_default: None,
             version: 3,
             impure: false,
