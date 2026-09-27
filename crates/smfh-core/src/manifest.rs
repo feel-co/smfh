@@ -760,6 +760,64 @@ mod tests {
     }
 
     #[test]
+    fn read_resolves_relative_paths_from_base_dirs() {
+        let f = write_manifest(
+            r#"{
+                "files": [{
+                    "type": "symlink",
+                    "source": "dotfiles/test.txt",
+                    "target": "/tmp/test.txt"
+                }],
+                "base_dir": "/repo",
+                "version": 3
+            }"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(
+            m.files[0].source,
+            Some(PathBuf::from("/repo/dotfiles/test.txt"))
+        );
+    }
+
+    #[test]
+    fn specific_base_dirs_override_base_dir() {
+        let f = write_manifest(
+            r#"{
+                "files": [{
+                    "type": "symlink",
+                    "source": "source.txt",
+                    "target": "target.txt"
+                }],
+                "base_dir": "/base",
+                "source_base_dir": "/sources",
+                "target_base_dir": "/targets",
+                "version": 3
+            }"#,
+        );
+        let m = Manifest::read(f.path(), false).unwrap();
+        assert_eq!(
+            m.files[0].source,
+            Some(PathBuf::from("/sources/source.txt"))
+        );
+        assert_eq!(m.files[0].target, PathBuf::from("/targets/target.txt"));
+    }
+
+    #[test]
+    fn read_rejects_relative_base_dir() {
+        let f = write_manifest(
+            r#"{
+                "files": [],
+                "base_dir": "repo",
+                "version": 3
+            }"#,
+        );
+        assert!(matches!(
+            Manifest::read(f.path(), false),
+            Err(ReadError::InvalidBaseDir { .. })
+        ));
+    }
+
+    #[test]
     fn read_parses_octal_permissions() {
         let f = write_manifest(
             r#"{"files":[{"type":"directory","target":"/tmp/x","permissions":"755"}],"version":3}"#,
@@ -801,6 +859,9 @@ mod tests {
     fn manifest_with(files: Vec<File>) -> Manifest {
         Manifest {
             files,
+            base_dir: None,
+            source_base_dir: None,
+            target_base_dir: None,
             clobber_by_default: None,
             version: 3,
             impure: false,
