@@ -57,6 +57,10 @@ fn handle_read_error(err: ReadError) -> ! {
             error!("{e:?}");
             process::exit(3);
         }
+        ReadError::InvalidBaseDir { field, path } => {
+            error!("Invalid {field} '{}'.", path.display());
+            process::exit(3);
+        }
         ReadError::ExpandFailed(e) => {
             error!("{e:?}");
             process::exit(4);
