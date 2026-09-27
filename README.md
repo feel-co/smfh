@@ -71,7 +71,7 @@ base directories and `clobber_by_default` settings.
   ],
   "base_dir": "/absolute/path",
   "clobber_by_default": false,
-  "version": 3
+  "version": 4
 }
 ```
 
@@ -81,7 +81,7 @@ base directories and `clobber_by_default` settings.
 
 | Field                | Type      | Required | Description                                                                                      |
 | -------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `version`            | `number`  | yes      | Format version. Current maximum is `3`. Older versions are accepted for backwards compatibility. |
+| `version`            | `number`  | yes      | Format version. Current maximum is `4`. Older versions are accepted for backwards compatibility. |
 | `files`              | `File[]`  | yes      | The operations to perform.                                                                       |
 | `base_dir`           | `string`  | no       | Default base directory for relative source and target paths. If provided, must be absolute. |
 | `source_base_dir`    | `string`  | no       | Base directory for relative source paths. Overrides `base_dir`. If provided, must be absolute. |
@@ -284,7 +284,7 @@ built releases if you'd like.
 
 `smfh` follows semantic versioning for the library (`smfh-core`) and keeps the
 CLI version in sync. The manifest format has its own version field, currently at
-`3`. The tool accepts all manifest versions `=< 3` and rejects newer versions to
+`4`. The tool accepts all manifest versions `=< 4` and rejects newer versions to
 prevent misinterpretation.
 
 ## License

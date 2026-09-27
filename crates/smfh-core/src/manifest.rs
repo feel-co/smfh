@@ -769,7 +769,7 @@ mod tests {
                     "target": "/tmp/test.txt"
                 }],
                 "base_dir": "/repo",
-                "version": 3
+                "version": 4
             }"#,
         );
         let m = Manifest::read(f.path(), false).unwrap();
@@ -791,7 +791,7 @@ mod tests {
                 "base_dir": "/base",
                 "source_base_dir": "/sources",
                 "target_base_dir": "/targets",
-                "version": 3
+                "version": 4
             }"#,
         );
         let m = Manifest::read(f.path(), false).unwrap();
@@ -808,7 +808,7 @@ mod tests {
             r#"{
                 "files": [],
                 "base_dir": "repo",
-                "version": 3
+                "version": 4
             }"#,
         );
         assert!(matches!(
