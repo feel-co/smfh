@@ -22,8 +22,8 @@ demonstration of each use case.
 
 ## Manifest format
 
-A manifest is a JSON object with a `version`, a list of `files`, and an optional
-`clobber_by_default` flag.
+A manifest is a JSON object with a `version`, a list of `files`, and optional
+base directories and `clobber_by_default` settings.
 
 ```json
 {
@@ -69,6 +69,7 @@ A manifest is a JSON object with a `version`, a list of `files`, and an optional
       "target": "./outputs/delete"
     }
   ],
+  "base_dir": "/absolute/path",
   "clobber_by_default": false,
   "version": 3
 }
@@ -82,9 +83,24 @@ A manifest is a JSON object with a `version`, a list of `files`, and an optional
 | -------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------ |
 | `version`            | `number`  | yes      | Format version. Current maximum is `3`. Older versions are accepted for backwards compatibility. |
 | `files`              | `File[]`  | yes      | The operations to perform.                                                                       |
+| `base_dir`           | `string`  | no       | Default base directory for relative source and target paths. If provided, must be absolute. |
+| `source_base_dir`    | `string`  | no       | Base directory for relative source paths. Overrides `base_dir`. If provided, must be absolute. |
+| `target_base_dir`    | `string`  | no       | Base directory for relative target paths. Overrides `base_dir`. If provided, must be absolute. |
 | `clobber_by_default` | `boolean` | no       | If `true`, overwrite existing files instead of backing them up. Default `false`.                 |
 
 <!--markdownlint-enable MD013-->
+
+### Path resolution
+
+Relative paths are resolved when the manifest is read. Absolute paths are
+unchanged.
+
+| Path             | First choice          | Second choice | Fallback                                      |
+| ---------------- | --------------------- | ------------- | --------------------------------------------- |
+| Relative source  | `source_base_dir`     | `base_dir`    | Current working directory with `--impure`     |
+| Relative target  | `target_base_dir`     | `base_dir`    | Current working directory with `--impure`     |
+
+If no applicable option is available, the relative path is ignored.
 
 ### File entry fields
 
