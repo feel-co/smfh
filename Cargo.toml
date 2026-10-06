@@ -19,7 +19,7 @@ smfh-core = { path = "./crates/smfh-core", version = "1.7.1" }
 
 blake3      = { version = "1.8.7", features = [ "mmap" ] }
 log         = "0.4.34"
-misstep     = { version = "0.2.0", features = [ "pretty" ] }
+misstep     = "0.3.0"
 pound       = "0.2.0"
 rand        = "0.10.2"
 serde       = { version = "1.0.229", features = [ "derive" ] }

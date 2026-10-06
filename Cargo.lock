@@ -203,9 +203,9 @@ dependencies = [
 
 [[package]]
 name = "misstep"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "358fdc26642e3d4e7ffe904f7b4d0868a2da8a54a0d4e77f90158643f0f28f10"
+checksum = "78535bf5c8617e488ae09df837dd55c083781f496948e43c5a69504fc741e3c4"
 
 [[package]]
 name = "num-conv"
@@ -423,6 +423,7 @@ name = "smfh-cli"
 version = "1.7.1"
 dependencies = [
  "log",
+ "misstep",
  "pound",
  "serde_json",
  "simplelog",

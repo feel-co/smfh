@@ -89,8 +89,8 @@ If `ignore_modification` is set, content checks are skipped.
 
 [`misstep`]: https://docs.rs/misstep
 
-All filesystem errors are wrapped with [`misstep`] context and rendered as
-pretty reports.
+All filesystem errors are wrapped with [`misstep`] context. With misstep's
+`pretty` feature enabled, `Debug` formatting renders them as pretty reports.
 
 ### Impure mode
 
