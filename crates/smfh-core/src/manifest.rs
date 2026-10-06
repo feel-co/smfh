@@ -5,14 +5,6 @@ use crate::{
         is_dangling_symlink,
     },
 };
-use color_eyre::{
-    Result,
-    eyre::{
-        Context as _,
-        OptionExt as _,
-        eyre,
-    },
-};
 use core::{
     cmp::Ordering,
     error::Error,
@@ -21,12 +13,19 @@ use core::{
         Display,
     },
 };
+use misstep::{
+    OptionExt as _,
+    Report,
+    Result,
+    ResultExt as _,
+    report,
+};
 
 /// Error returned by [`Manifest::read`].
 #[derive(Debug)]
 pub enum ReadError {
-    ExpandFailed(color_eyre::Report),
-    Io(color_eyre::Report),
+    ExpandFailed(Report),
+    Io(Report),
     VersionTooNew { manifest: u64 },
 }
 
@@ -57,7 +56,7 @@ pub enum DiffError {
     /// target path and the formatted error. Returned instead of `Ok(())` so
     /// the manifest rename is skipped and the next run can retry.
     ActivationFailed(Vec<(PathBuf, String)>),
-    Other(color_eyre::Report),
+    Other(Report),
 }
 
 impl Display for DiffError {
@@ -190,8 +189,7 @@ impl<T: Clone> Merge for Option<T> {
 ///
 ///  - The Vec passed is empty
 pub fn merge_files_from_manifests(manifests: Vec<Manifest>) -> Result<Manifest> {
-    let right_most: &mut Manifest =
-        &mut manifests.last().ok_or_eyre("No manifests passed")?.clone();
+    let right_most: &mut Manifest = &mut manifests.last().context("No manifests passed")?.clone();
     let mut map: HashMap<(FileKind, PathBuf), File> = HashMap::new();
 
     for m in manifests {
@@ -337,19 +335,19 @@ impl Manifest {
     #[inline]
     pub fn read(manifest_path: &Path, impure: bool) -> Result<Self, ReadError> {
         let file = fs::File::open(manifest_path)
-            .wrap_err("Failed to open manifest")
+            .context("Failed to open manifest")
             .map_err(ReadError::Io)?;
         let root: Value = serde_json::from_reader(BufReader::new(&file))
-            .wrap_err("Failed to deserialize manifest")
+            .context("Failed to deserialize manifest")
             .map_err(ReadError::Io)?;
         let version = root
             .get("version")
-            .ok_or_eyre("Failed to get version from manifest")
+            .context("Failed to get version from manifest")
             .map_err(ReadError::Io)?;
 
         let manifest_version = version
             .as_u64()
-            .ok_or_else(|| ReadError::Io(eyre!("manifest version is not a valid integer")))?;
+            .ok_or_else(|| ReadError::Io(report!("manifest version is not a valid integer")))?;
 
         if manifest_version > VERSION {
             return Err(ReadError::VersionTooNew {
@@ -358,7 +356,7 @@ impl Manifest {
         }
 
         let mut manifest: Self = serde_json::from_value(root)
-            .wrap_err("Failed to deserialize manifest")
+            .context("Failed to deserialize manifest")
             .map_err(ReadError::Io)?;
 
         info!("Deserialized manifest: '{}'", manifest_path.display());
@@ -380,7 +378,7 @@ impl Manifest {
         } else if impure {
             fn expand(path_buf: &PathBuf) -> Result<PathBuf> {
                 return Ok(shellexpand(path_buf)
-                    .map_err(|err| eyre!("{err:?}"))?
+                    .map_err(|err| report!("{:?}", err))?
                     .to_path_buf());
             }
             for f in &mut manifest.files {
@@ -462,7 +460,7 @@ impl Manifest {
     /// `prefix` is used when backing up existing files that would be
     /// overwritten. See [`prefix_move`].
     #[inline]
-    pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, color_eyre::Report)> {
+    pub fn activate(&mut self, prefix: &str) -> Vec<(PathBuf, Report)> {
         self.files.sort();
         let mut failures = Vec::new();
         for file in &mut self.files {
@@ -483,7 +481,7 @@ impl Manifest {
     /// finally directories). Returns per-file failures; the caller decides
     /// whether any failure is fatal.
     #[inline]
-    pub fn deactivate(&mut self) -> Vec<(PathBuf, color_eyre::Report)> {
+    pub fn deactivate(&mut self) -> Vec<(PathBuf, Report)> {
         self.files.sort();
         let mut failures = Vec::new();
         for file in self.files.iter_mut().rev() {
@@ -534,7 +532,7 @@ impl Manifest {
                 };
             }
             Ok(false) => return Err(DiffError::OldManifestMissing),
-            Err(err) => return Err(DiffError::Other(color_eyre::Report::from(err))),
+            Err(err) => return Err(DiffError::Other(Report::from(err))),
         };
 
         // Files which have attributes other than `target` changed

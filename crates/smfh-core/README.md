@@ -87,9 +87,10 @@ If `ignore_modification` is set, content checks are skipped.
   source, unexpected fields, etc.).
 - [`DiffError`](src/manifest.rs) - diff application failure.
 
-[`color-eyre`]: https://docs.rs/color-eyre
+[`misstep`]: https://docs.rs/misstep
 
-All filesystem errors are wrapped with [`color-eyre`] for context.
+All filesystem errors are wrapped with [`misstep`] context. With misstep's
+`pretty` feature enabled, `Debug` formatting renders them as pretty reports.
 
 ### Impure mode
 

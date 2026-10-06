@@ -4,11 +4,11 @@ use args::{
     Args,
     Subcommands,
 };
-use clap::Parser as _;
 use log::{
     error,
     info,
 };
+use pound::Parse as _;
 use simplelog::{
     ColorChoice,
     Config,
@@ -82,10 +82,7 @@ fn verify(manifest: &Path, impure: bool) -> Manifest {
     m
 }
 
-#[expect(clippy::expect_used)]
 fn main() {
-    color_eyre::install().expect("Failed to setup color_eyre");
-
     let args = Args::parse();
 
     let level = if args.verbose {
@@ -173,7 +170,8 @@ fn main() {
         Subcommands::Merge { manifests } => {
             let deserialized_manifests = manifests
                 .iter()
-                .map(|m| read_or_exit(m, args.impure))
+                .flat_map(|m| m.split(','))
+                .map(|m| read_or_exit(Path::new(m), args.impure))
                 .collect();
             match merge_files_from_manifests(deserialized_manifests) {
                 Ok(m) => print_manifest(&m),
