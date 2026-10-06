@@ -1,8 +1,9 @@
 use pound::Parse;
 use std::path::PathBuf;
 
+/// Sleek Manifest File Handler
 #[derive(Parse, Debug)]
-#[pound(name = "smfh", version = "1.7.1")]
+#[pound(name = "smfh")]
 pub struct Args {
     #[pound(short, long)]
     pub verbose: bool,
@@ -47,6 +48,6 @@ pub enum Subcommands {
         manifest: PathBuf,
     },
     Merge {
-        manifests: Vec<PathBuf>,
+        manifests: Vec<String>,
     },
 }

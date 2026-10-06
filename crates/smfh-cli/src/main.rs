@@ -170,7 +170,8 @@ fn main() {
         Subcommands::Merge { manifests } => {
             let deserialized_manifests = manifests
                 .iter()
-                .map(|m| read_or_exit(m, args.impure))
+                .flat_map(|m| m.split(','))
+                .map(|m| read_or_exit(Path::new(m), args.impure))
                 .collect();
             match merge_files_from_manifests(deserialized_manifests) {
                 Ok(m) => print_manifest(&m),
